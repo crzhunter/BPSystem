@@ -184,7 +184,7 @@ export function SettingsView({
                 <input
                   type="number"
                   min="0"
-                  max="100"
+                  max="8"
                   step="any"
                   required
                   value={weight}

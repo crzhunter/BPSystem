@@ -1,4 +1,4 @@
-# BPSystem REST API · 第一至第五阶段
+# BPSystem REST API · 第一至第六阶段
 
 以下路径相对于同源前缀 `/api`。生产默认地址为 `http://localhost:3001/api`。请求和响应使用 JSON，提交对象时设置 `Content-Type: application/json`。常规请求体上限 128 KiB，备份恢复上限 64 MiB。GET 返回 200，创建选手、战队或存档返回 201，删除成功返回 204 空响应。接口响应带 `Cache-Control: no-store`。
 
@@ -10,11 +10,11 @@
 | --- | --- | --- |
 | GET | `/health` | 返回 `ok, db, heroCount, timestamp`。 |
 | GET | `/system/network` | 返回后端 `port, hostname, lanUrls[]`。开发网页向手机展示同一主机的 Vite 端口。 |
-| GET | `/settings` | 返回 `patch, hasOpenDotaApiKey, maskedPreview, tournamentMatchWeight, pubRecentDays`。 |
-| PUT | `/settings` | 部分更新 `opendotaApiKey`（最多 512 字符，空串清除）、`tournamentMatchWeight`（0–100）、`pubRecentDays`（整数 1–365），返回更新后的设置。新库默认 4 倍、60 天。 |
+| GET | `/settings` | 返回 `patch, hasOpenDotaApiKey, maskedPreview, tournamentMatchWeight, pubRecentDays, playerPoolWeight`。 |
+| PUT | `/settings` | 部分更新接口密钥、赛事局倍数、近期窗口或英雄池权重。密钥最多 512 字符，空串清除。新库默认 4 倍、60 天、0.18。兼容旧请求的赛事倍数 0–100，生效范围 0–8。窗口取整数 1–365，英雄池权重自动限制在 0.15–0.20。 |
 | GET | `/heroes?q=` | 可按中英文名、内部名、简称搜索。数组项含 `id, name, localizedName, cnName, aliases, img, icon, portraitUrl, meta, primaryAttr, attackType, roles, typicalRoles, tags`。 |
 | GET | `/items` | 按 ID 升序返回物品数组，每项含 `id, key, cnName, localizedName, imgUrl`。英雄及物品的全尺寸图片地址均指向 Steam CDN。 |
-| POST | `/constants/sync` | 无需请求体。原子刷新英雄、物品、版本、职业赛分阵营和对位样本，返回 `{patch,sampledAt,synced,itemCount}`。 |
+| POST | `/constants/sync` | 无需请求体。原子刷新英雄、物品、版本、7.42 起算边界及后续补丁 ID、职业赛分阵营和对位样本，返回 `{patch,sampledAt,synced,itemCount}`。 |
 | POST | `/heroes/sync` | 无必填字段，更新本地英雄资料，返回 `{synced,heroCount}`。 |
 | POST | `/heroes/matchups/sync` | `{"heroIds":[1,2]}` 同步指定英雄对位。空数组跳过，省略则请求全库。返回 `{requested,synced,results:[{heroId,count,error?}]}`，遇上游错误停止该批次。 |
 
@@ -29,6 +29,7 @@
 | PUT | `/players/:id` | 部分更新创建字段，返回选手。换绑账号会清除原账号的路人样本和同步状态。 |
 | DELETE | `/players/:id` | 删除选手并释放相应阵容位置。 |
 | POST | `/players/:id/sync` | 同步公开资料、路人英雄与逐场战绩，返回 `{player,analytics}`。 |
+| POST | `/players/resync-patch` | 无需请求体。按本地 ID 逐人刷新所有选手。返回 `{results:[{playerId,success,isProfilePrivate?,error?}]}`，单个账号失败时保留其原统计并继续。 |
 | GET | `/players/:id/analytics` | 返回 `playerId, isProfilePrivate, privacyHint, lastSyncedAt, recentForm, roleDistribution, sideSplits, heroPool`。近期表现含连胜败、平均 KDA/GPM/XPM。英雄池含赛事和路人分项、`weightedScore, threatScore, grade, source`。 |
 | GET | `/teams` | 战队数组，每队含队伍资料、五个有序首发槽 `roster` 和替补 `subs`。 |
 | POST | `/teams` | `name` 必填，可传 `tag,color,notes,members`。颜色为六位十六进制色值，返回新战队。 |
@@ -37,7 +38,9 @@
 | POST | `/teams/:id/sync` | 逐人同步首发和替补，返回 `{results:[{playerId,success,isProfilePrivate?,error?}]}`。 |
 | DELETE | `/teams/:id` | 删除战队预设和成员关联，选手资料保留。 |
 
-每个槽位为 `{slot,player}`，空位的 player 为 null。槽位 1–5 为首发，6 及以上为替补。队内选手和槽位均须唯一。英雄池评分、阵营胜率及赛事与路人的去重规则见 [第二阶段文档](phase-2.md)。
+每个槽位为 `{slot,player}`，空位的 player 为 null。槽位 1–5 为首发，6 及以上为替补。队内选手和槽位均须唯一。
+
+近期状态、阵营胜率和分路分布按 7.42+ 逐场记录统计。英雄池每项新增 `patch742Games, patch742Wins, isPatch742Sample, patchPub, patchTournament`。前两项合计版本内路人和赛事，分项含场数、胜数和胜率。原 `pub` 与 `tournament` 留作历史明细。`weightedScore` 使用版本样本，旧记录最多贡献三分。
 
 ## 比赛库与解析任务
 
@@ -122,13 +125,25 @@
 | POST | `/bp/sessions/:id/undo` | 撤销最后一步，返回完整存档；空局返回 400。 |
 | POST | `/bp/sessions/:id/reset` | 清空动作并保留对局资料和阵容，返回完整存档。 |
 | DELETE | `/bp/sessions/:id` | 删除存档及动作。 |
-| POST | `/bp/recommend` | 传 `{"sessionId":1}` 或完整／部分草稿，可带可选整数 `previewHeroId`，返回 `patch,currentStep,banRecommendations,pickRecommendations,composition,weights,preview,lineupAudit,scoutingCard`。推荐仅查询本地数据。 |
+| POST | `/bp/recommend` | 传 `{"sessionId":1}` 或完整／部分草稿，可带整数 `previewHeroId` 和 `rolePreference`。返回 `patch,currentStep,banRecommendations,pickRecommendations,composition,weights,preview,lineupAudit,scoutingCard,effectiveRoleMode,roleModes,bpAdvantage,laneForecast`。推荐仅查询本地数据。 |
 
 英雄的 `primaryAttr` 为 str、agi、int、all。`meta` 包含 tier、baseWinrate、highMmrWinrate、pickRate、proContestedRate、proBanRate、sideBias、counts、sampledAt 和 patch。百分比标度为 0–100，缺少胜率或阵营样本时对应值为 null。
 
 `composition.our`、`composition.enemy` 含 assignments、coveredRoles、missingRoles、scores、damageProfile、rangeBalance、warnings、strengths。scores 的六个键为 disable、frontline、burst、sustain、push、teamfight。每方每位英雄只占一个位置。预览返回候选、阵营、是否为禁用推演、fillsRole 和六项 delta。当前手结束或候选已使用时 preview 为 null。
 
-推荐项含 heroId、cnName、localizedName、portraitUrl、primaryAttr、tier、score、suggestedRole、shortTags，以及 metaSummary、compositionFit、matchupDetails 和可选 playerFit。结构化内容也可通过 details 读取。机制判断的 deltaPct 为 null，有样本时为带符号的百分点。禁用项额外含 banCategory 和 whyBan。weights.pick 与 weights.ban 分别给出版本、阵容、对位、顺位策略、选手的实际权重。详细公式及边界见[五期说明](phase-5-bp-overhaul.md)。
+推荐项含 heroId、cnName、localizedName、portraitUrl、primaryAttr、tier、score、suggestedRole、shortTags，以及 metaSummary、compositionFit、matchupDetails 和可选 playerFit。结构化内容也可通过 details 读取。机制判断的 deltaPct 为 null，有样本时为带符号的百分点。禁用项额外含 banCategory 和 whyBan。weights.pick 与 weights.ban 分别给出版本、阵容、对位、顺位策略、选手的实际权重。
+
+| 六期字段 | 含义 |
+| --- | --- |
+| 请求 `rolePreference` | 省略为 `"auto"`，可传 `"support"`、`"core"` 或整数 1–5。例如 `{"sessionId":1,"rolePreference":4}`。非法值返回 400。 |
+| `effectiveRoleMode` | 当前动作对应的 `{mode,label,description,targetRoles:number[]}`。切换到另一榜时，读取 `roleModes.pick` 或 `roleModes.ban` 获取相应策略。 |
+| 推荐项 `roleGroup,roleLabel,playerContribution` | 跨核心、辅助的摇摆英雄为 `flex`，其余为 `core` 或 `support`。中文标签列出常见位置。贡献值为选手因素实际计入的推荐分。 |
+| `composition.our.weaknesses[]` | `{id,severity,title,detail,fixHeroes[]}`。风险分为 `high` 和 `medium`。 |
+| `composition.enemy.exploitableWeaknesses[]` | 同样的风险字段，`counterHeroes[]` 列出我方破阵人选。两类候选均含 `heroId,cnName,portraitUrl,role,reason`，最多三人，剔除双方已禁已选。整局结束时清空候选。 |
+| `bpAdvantage` | `radiantWinProb,direWinProb` 为 30–70 的百分数，合计 100。`metaEdge,matchupEdge,compositionEdge,sideEdge` 为天辉视角的百分点，`summary` 按我方视角解读。 |
+| `laneForecast[]` | 双方各选至少两人后输出优势路、中路、劣势路。每路含 `label,location,ourHeroes,enemyHeroes,score,verdict,partial`。任一侧该路尚未亮人时 score 为 null、verdict 为「待亮人」。英雄数组使用英雄 ID。 |
+
+分阶段的排名、旧版折算和对线估算见[六期分析说明](phase-6-analyst-upgrade.md)。
 
 更新存档、执行动作、撤销和重置时可提交整数 `revision` 实施并发检查。已完成的对局仍可撤销。阵容缺口、推荐因素及对手情报的字段含义见 [第三阶段文档](phase-3.md)。
 
@@ -136,7 +151,7 @@
 
 | 方法 | 路径 | 请求和响应 |
 | --- | --- | --- |
-| GET | `/backup/export` | 下载 JSON，含 `version:3`、`exportedAt` 和各业务表数组，文件名为 `BPSystem-YYYY-MM-DD.json`。 |
-| POST | `/backup/import` | 提交完整版本 2 或 3 快照。事务内替换业务数据、保留本机密钥、清理请求缓存，返回 `{counts:{表名:行数}}`。错误快照整笔回滚。 |
+| GET | `/backup/export` | 下载 JSON，含 `version:4`、`exportedAt` 和各业务表数组，文件名为 `BPSystem-YYYY-MM-DD.json`。 |
+| POST | `/backup/import` | 接受版本 2、3、4。旧快照按原始逐场时间识别版本样本。事务内替换业务数据、保留本机密钥、清理请求缓存，返回 `{counts:{表名:行数}}`。错误快照整笔回滚。 |
 
-快照包括 `settings, heroes, players, teams, team_members, matches, match_players, match_picks_bans, player_pub_heroes, player_pub_matches, draft_sessions, draft_actions, hero_matchups`。录像字段随比赛与参赛者一起备份。恢复时保留本机当前版本的英雄常量、物品及模型样本，补入历史备份独有的英雄记录。设置只导出赛事权重及近期窗口。当前浏览器草稿和查询中的任务编号分别保存在浏览器本地存储和会话存储。
+快照包括 `settings, heroes, players, teams, team_members, matches, match_players, match_picks_bans, player_pub_heroes, player_pub_matches, draft_sessions, draft_actions, hero_matchups`。录像字段随比赛与参赛者一起备份。恢复时保留本机当前版本的英雄常量、物品及模型样本，补入历史备份独有的英雄记录。设置导出赛事倍数、英雄池权重和近期窗口。当前浏览器草稿和查询中的任务编号分别保存在浏览器本地存储和会话存储。

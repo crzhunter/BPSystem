@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
 import { recommend } from '../services/bpEngine.ts';
+import { parsePreference } from '../services/rolePriority.ts';
 import { normalizeDraft, readSession, writeSession } from '../services/draftState.ts';
 import { syncMatchups } from '../services/matchups.ts';
 import type { OpenDotaClient } from '../services/opendota.ts';
@@ -80,6 +81,7 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
         req.body.previewHeroId == null
           ? undefined
           : integer(req.body.previewHeroId, 1, Number.MAX_SAFE_INTEGER, '预览英雄'),
+        parsePreference(req.body.rolePreference),
       ),
     ),
   );

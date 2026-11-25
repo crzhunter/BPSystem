@@ -118,4 +118,9 @@ UPDATE draft_sessions SET cm_order_version='classic' WHERE EXISTS(SELECT 1 FROM 
 ALTER TABLE draft_sessions DROP COLUMN previous_patch;
 ALTER TABLE draft_sessions DROP COLUMN previous_order;
 `,
+  `
+ALTER TABLE player_pub_matches ADD COLUMN patch INTEGER;
+ALTER TABLE player_pub_heroes ADD COLUMN patch_games INTEGER NOT NULL DEFAULT 0 CHECK(patch_games >= 0);
+ALTER TABLE player_pub_heroes ADD COLUMN patch_wins INTEGER NOT NULL DEFAULT 0 CHECK(patch_wins BETWEEN 0 AND patch_games);
+`,
 ];

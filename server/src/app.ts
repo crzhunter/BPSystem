@@ -33,7 +33,7 @@ export function createApp(
         (!req.body || Array.isArray(req.body) || typeof req.body !== 'object') &&
         !(
           req.body === undefined &&
-          /^\/(?:(?:constants|heroes(?:\/matchups)?|(?:players|teams)\/\d+)\/sync|bp\/sessions\/\d+\/(?:undo|reset)|matches\/\d+\/request-parse)$/.test(
+          /^\/(?:(?:constants|heroes(?:\/matchups)?|(?:players|teams)\/\d+)\/sync|players\/resync-patch|bp\/sessions\/\d+\/(?:undo|reset)|matches\/\d+\/request-parse)$/.test(
             req.path,
           )
         )

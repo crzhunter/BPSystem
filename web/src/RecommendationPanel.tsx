@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Crosshair, Trophy, LockKeyhole } from 'lucide-react';
 import { type Advice } from './draftModel';
 import { Portrait } from './HeroPoolGrid';
+import type { RolePreference } from '../../server/src/services/rolePriority';
 type Tab = 'pick' | 'ban' | 'scout';
 export function RecommendationPanel({
   data,
@@ -10,6 +11,8 @@ export function RecommendationPanel({
   lock,
   pending,
   scouting,
+  preference,
+  setPreference,
 }: {
   data: Advice;
   turn: string;
@@ -17,6 +20,8 @@ export function RecommendationPanel({
   lock: (id: number) => void;
   pending: number | null;
   scouting?: ReactNode;
+  preference: RolePreference;
+  setPreference: (value: RolePreference) => void;
 }) {
   const active = data.currentStep.actionType;
   const [choice, setChoice] = useState<{ turn: string; tab: Tab }>();
@@ -32,6 +37,40 @@ export function RecommendationPanel({
         </h2>
         <small>当前版本 {data.patch}</small>
       </div>
+      <fieldset className="position-choice">
+        <legend>当前 BP 倾向位置</legend>
+        {(
+          [
+            ['auto', 'support', 'core'],
+            [1, 2, 3, 4, 5],
+          ] as const
+        ).map((group) => (
+          <div className="role-chips" key={group[0]}>
+            {group.map((value) => (
+              <button
+                key={value}
+                aria-pressed={preference === value}
+                onClick={() => setPreference(value)}
+              >
+                {value === 'auto'
+                  ? '智能随阶段'
+                  : value === 'core'
+                    ? '核心(1/2/3)'
+                    : value === 'support'
+                      ? '辅助(4/5)'
+                      : value}
+              </button>
+            ))}
+          </div>
+        ))}
+        {tab !== 'scout' && (
+          <p aria-live="polite">
+            {data.roleModes[tab].mode === preference
+              ? data.roleModes[tab].description
+              : '正在重排英雄…'}
+          </p>
+        )}
+      </fieldset>
       <div className="rec-tabs">
         {(['pick', 'ban', ...(scouting ? ['scout'] : [])] as Tab[]).map((k) => (
           <button key={k} aria-pressed={tab === k} onClick={() => setChoice({ turn, tab: k })}>
@@ -65,7 +104,7 @@ export function RecommendationPanel({
                   <div className="decision-name">
                     <h3>{r.cnName}</h3>
                     <small>
-                      {r.tier} · {r.suggestedRole} 号位
+                      {r.tier} · {r.roleLabel}
                     </small>
                   </div>
                   <b className="decision-score">
@@ -108,7 +147,7 @@ export function RecommendationPanel({
                   </dd>
                   {r.playerFit && (
                     <>
-                      <dt>选手绝活</dt>
+                      <dt>选手英雄池</dt>
                       <dd>{r.playerFit.text}</dd>
                     </>
                   )}
@@ -135,7 +174,7 @@ export function RecommendationPanel({
                 <small>#{i + 4}</small>
                 <Portrait hero={{ ...r, id: r.heroId }} />
                 <b>{r.cnName}</b>
-                <span>{r.shortTags.join(' · ')}</span>
+                <span>{r.roleLabel}</span>
                 <strong>{r.score.toFixed(1)}</strong>
               </button>
             ))}

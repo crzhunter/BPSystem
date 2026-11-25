@@ -56,12 +56,13 @@ function players(db: DatabaseSync, count: number) {
   for (let i = 1; i <= count; i++) put.run(100 + i, '选手' + i);
 }
 function pubHero(db: DatabaseSync, player: number, hero: number, games: number, wins: number) {
-  db.prepare("INSERT INTO player_pub_heroes VALUES(?,?,?,?,?,0,0,0,0,'a')").run(
+  db.prepare("INSERT INTO player_pub_heroes VALUES(?,?,?,?,?,0,0,0,0,'a',?,?)").run(
     player,
     hero,
     games,
     wins,
     Math.floor(Date.now() / 1000),
+    games, wins,
   );
 }
 function tournament(db: DatabaseSync, id: number, won: Side, rows: [number, number, Side][]) {
@@ -217,7 +218,7 @@ test('存档 CRUD、十槽位、动作归属、并发步号、重复英雄、撤
   await req(path, 'GET', undefined, 404);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM draft_actions').get()?.n, 0);
 });
-test('赛事绝活优先；情报卡按同场同阵营统计双人、三人组合和真实摇摆位', async (t) => {
+test('情报卡保留赛事绝活，按同场同阵营统计组合，仅计入位置吻合的摇摆选手', async (t) => {
   const { db, req } = await fixture(t);
   players(db, 5);
   for (let i = 1; i <= 8; i++)
@@ -230,16 +231,17 @@ test('赛事绝活优先；情报卡按同场同阵营统计双人、三人组�
   tournament(db, 9, 'radiant', [[1, 94, 'radiant']]);
   pubHero(db, 1, 1, 14, 6);
   pubHero(db, 2, 94, 40, 27);
+  pubHero(db, 3, 27, 40, 27);
   const input = {
     ourSide: 'radiant',
     firstPickSide: 'dire',
-    direPlayerIds: [1, 2, 3, 4],
+    direPlayerIds: [1, null, 4, 2, 3],
     actions: [],
   };
   const intel = await req('/bp/recommend', 'POST', input);
-  assert.equal(intel.banRecommendations[0].heroId, 94);
+  assert.ok(!intel.banRecommendations.slice(0, 3).some((h: {heroId: number}) => h.heroId === 94));
   const card = intel.scoutingCard,
-    top = card.topBans[0];
+    top = card.topBans.find((h: {heroId: number}) => h.heroId === 94);
   assert.equal(top.owner.playerId, 1);
   assert.equal(top.tournament.games, 9);
   assert.equal(top.tournament.wins, 8);
@@ -247,9 +249,9 @@ test('赛事绝活优先；情报卡按同场同阵营统计双人、三人组�
   assert.ok(top.score > 0);
   assert.deepEqual(
     card.flexPicks
-      .find((f: { heroId: number }) => f.heroId === 94)
-      .players.map((p: { role: number }) => p.role),
-    [1, 2],
+      .find((f: { heroId: number }) => f.heroId === 27)
+      .players.map((p: { role: number }) => p.role).sort(),
+    [4, 5],
   );
   assert.ok(
     card.comfortCombos.some(
@@ -264,7 +266,8 @@ test('赛事绝活优先；情报卡按同场同阵营统计双人、三人组�
   assert.equal(card.sideProfile.currentSide, 'dire');
   await req('/settings', 'PUT', { tournamentMatchWeight: 0 });
   const fresh = await req('/bp/recommend', 'POST', input);
-  assert.ok(fresh.banRecommendations[0].score < intel.banRecommendations[0].score);
+  const lionScore = (r: typeof intel) => r.scoutingCard.topBans.find((h: {heroId: number}) => h.heroId === 26).score;
+  assert.ok(lionScore(fresh) < lionScore(intel));
   const swapped = await req('/bp/recommend', 'POST', { ...input, ourSide: 'dire' });
   assert.deepEqual(swapped.scoutingCard.topBans, []);
 });
@@ -302,7 +305,7 @@ test('反向对位提升针对已亮核心的禁选分；空矩阵保留离线�
   const pick = after.pickRecommendations.find((h) => h.heroId === 27)!;
   assert.equal(pick.suggestedPlayerId, 1);
   assert.equal(pick.suggestedRole, 4);
-  assert.equal(after.banRecommendations[0].targetPlayers[0].playerId, 2);
+  assert.equal(after.banRecommendations.find(h => h.heroId === 26)?.targetPlayers[0].playerId, 2);
 });
 test('位置和职能缺口影响同一英雄评分；已占位置不再推荐同一选手', async (t) => {
   const { db } = await fixture(t);

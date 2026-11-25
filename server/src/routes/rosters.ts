@@ -103,14 +103,9 @@ export function rosterRoutes(db: DatabaseSync, client: OpenDotaClient) {
     await client.syncPlayer(id);
     res.json({ player: player(existing(db, 'players', req.params.id)), analytics: analytics(db, id) });
   });
-  r.post('/teams/:id/sync', async (req, res) => {
-    existing(db, 'teams', req.params.id);
-    const members = db
-      .prepare('SELECT player_id FROM team_members WHERE team_id=? ORDER BY slot')
-      .all(req.params.id);
+  async function syncRoster(playerIds: number[]) {
     const results = [];
-    for (const m of members) {
-      const playerId = Number(m.player_id);
+    for (const playerId of playerIds) {
       try {
         await client.syncPlayer(playerId);
         results.push({
@@ -126,7 +121,15 @@ export function rosterRoutes(db: DatabaseSync, client: OpenDotaClient) {
         });
       }
     }
-    res.json({ results });
+    return { results };
+  }
+  r.post('/teams/:id/sync', async (req, res) => {
+    existing(db, 'teams', req.params.id);
+    const members = db.prepare('SELECT player_id FROM team_members WHERE team_id=? ORDER BY slot').all(req.params.id);
+    res.json(await syncRoster(members.map(m => Number(m.player_id))));
+  });
+  r.post('/players/resync-patch', async (_req, res) => {
+    res.json(await syncRoster(db.prepare('SELECT id FROM players ORDER BY id').all().map(p => Number(p.id))));
   });
   r.get('/players', (_req, res) =>
     res.json(db.prepare('SELECT * FROM players ORDER BY id').all().map(player)),

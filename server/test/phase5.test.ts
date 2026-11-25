@@ -135,7 +135,7 @@ test('有实战记录的一方获得额外权重与选手卡片，另一方保�
   );
   const body = { radiantPlayerIds: [null, null, null, 1] };
   assert.equal((await advice(body)).weights.pick.player, 0);
-  db.prepare("INSERT INTO player_pub_heroes VALUES(1,27,80,58,?,0,0,0,0,'a')").run(
+  db.prepare("INSERT INTO player_pub_heroes VALUES(1,27,80,58,?,0,0,0,0,'a',80,58)").run(
     Math.floor(Date.now() / 1000),
   );
   const r = await advice(body),
@@ -161,7 +161,8 @@ test('常量、中文资料及分阵营样本完整后才发布快照，错误�
     const u = new URL(String(input));
     urls.push(u);
     const bodies: Record<string, unknown> = {
-      '/api/constants/patch': [{ id: 62, name: '7.43', date: '2026-11-24T00:00:00Z' }],
+      '/api/constants/patch': [{ id: 61, name: '7.42', date: '2026-11-18T21:28:07.019Z' },
+        { id: 62, name: '7.43', date: '2026-11-24T00:00:00Z' }],
       '/api/constants/heroes': odHeroes,
       '/api/explorer': u.searchParams.get('sql')?.includes('AS against')
         ? { rows: [{ hero_id: 1, against: 2, games: 4, wins: 2 }] }

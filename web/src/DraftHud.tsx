@@ -7,6 +7,7 @@ import {
   slotsKey,
   type Room,
   type Action,
+  type Advice,
 } from './draftModel';
 import type { Hero, Player } from './api';
 import { Portrait } from './HeroPoolGrid';
@@ -16,16 +17,19 @@ export function DraftHud({
   heroes,
   players,
   assign,
+  advice,
 }: {
   d: Room;
   heroes: Hero[];
   players: Player[];
   assign: (i: number, a: Action) => void;
+  advice?: Advice;
 }) {
   const order = cmOrder(d.firstPickSide, d.cmOrderVersion),
     step = currentStep(d.firstPickSide, d.ourSide, d.actions.length, d.cmOrderVersion);
   const byId = new Map(heroes.map((h) => [h.id, h]));
   const next = order[d.actions.length + 1];
+  const advantage = advice?.bpAdvantage;
   return (
     <>
       <div className="hud-sides">
@@ -121,7 +125,11 @@ export function DraftHud({
                               </select>
                             )}
                             {a.assignedPlayerId && (
-                              <a href={`#replays?mode=wards&playerId=${a.assignedPlayerId}&side=${s}`}>查看录像</a>
+                              <a
+                                href={`#replays?mode=wards&playerId=${a.assignedPlayerId}&side=${s}`}
+                              >
+                                查看录像
+                              </a>
                             )}
                           </div>
                         )}
@@ -171,6 +179,61 @@ export function DraftHud({
           );
         })}
       </div>
+      {advantage && (
+        <section className="bp-balance bp-box" aria-label="BP 胜率预估">
+          <header>
+            <strong>BP 胜率预估</strong>
+            <span>{advantage.summary}</span>
+          </header>
+          <div className="balance-labels">
+            <b>天辉 {advantage.radiantWinProb.toFixed(1)}%</b>
+            <b>夜魇 {advantage.direWinProb.toFixed(1)}%</b>
+          </div>
+          <div
+            className="balance-track"
+            role="meter"
+            aria-label="天辉预估胜率"
+            aria-valuenow={advantage.radiantWinProb}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <i style={{ width: advantage.radiantWinProb + '%' }} />
+          </div>
+          <div className="adv-components">
+            <span>天辉分差</span>
+            {(
+              [
+                ['metaEdge', '版本'],
+                ['matchupEdge', '对位'],
+                ['compositionEdge', '阵容'],
+                ['sideEdge', '阵营'],
+              ] as const
+            ).map(([key, label]) => (
+              <span key={key}>
+                {label} {advantage[key] > 0 ? '+' : ''}
+                {advantage[key].toFixed(1)}
+              </span>
+            ))}
+          </div>
+          {!!advice?.laneForecast.length && (
+            <div className="lane-forecast">
+              {advice.laneForecast.map((l) => (
+                <div key={l.label}>
+                  <small>
+                    {l.label} · {l.location}
+                  </small>
+                  <b>{l.verdict}</b>
+                  <span>
+                    {l.ourHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'} 对{' '}
+                    {l.enemyHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'}
+                  </span>
+                  {l.partial && <small>分路待定</small>}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       <div className="hud-track bp-box">
         <div className="track-head">
           <b>禁选进度</b>

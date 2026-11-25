@@ -8,6 +8,17 @@ export const tagLabels = {
   flex: '摇摆位',
   frontline: '前排',
   laneDominator: '线优',
+  highRegen: '高回复肉核',
+  illusionSummon: '幻象召唤',
+  highMobility: '高机动',
+  greedyCore: '吃发育',
+  glassCannon: '脆皮后排',
+  antiHeal: '压制回复',
+  aoeClear: '范围清场',
+  instantDisable: '快速留人',
+  backlineDive: '切后排',
+  scout: '探视野',
+  roshan: '控盾',
 } as const;
 export type Tag = keyof typeof tagLabels;
 export type HeroTraits = { typicalRoles: number[]; tags: Tag[] };
@@ -81,7 +92,18 @@ const hardControl = new Set([
 ]);
 const extra: Partial<Record<Tag, number[]>> = {
   burst: [8, 44, 145],
-  save: [20, 50, 57, 66, 79, 83, 86, 90, 91, 100, 102, 111, 112, 135],
+  save: [20, 50, 57, 66, 79, 83, 86, 90, 91, 100, 102, 110, 111, 112, 135],
+  highRegen: [36, 42, 49, 54, 57, 59, 69, 73, 98, 102],
+  illusionSummon: [12, 48, 61, 66, 77, 80, 81, 82, 89, 109, 113],
+  highMobility: [1, 10, 12, 13, 17, 39, 46, 106, 114, 120, 126],
+  greedyCore: [1, 8, 10, 12, 41, 48, 54, 56, 63, 67, 73, 81, 82, 89, 94, 109, 113],
+  glassCannon: [5, 6, 11, 25, 26, 30, 35, 45, 50, 58, 68, 75, 86, 87, 101, 111],
+  antiHeal: [40, 47, 68, 69, 92],
+  aoeClear: [2, 7, 13, 16, 18, 23, 25, 33, 52, 64, 88, 97, 98, 103, 107, 120],
+  instantDisable: [2, 3, 13, 26, 27, 60, 69, 75, 86, 104],
+  backlineDive: [1, 8, 13, 17, 39, 44, 60, 67, 71, 106, 126, 129],
+  scout: [9, 38, 40, 48, 53, 61, 78, 80, 87, 92, 110, 119],
+  roshan: [46, 48, 61, 70, 73, 80, 81, 95, 109],
   teamfight: [
     7, 13, 16, 29, 31, 33, 37, 40, 41, 55, 64, 68, 72, 75, 78, 83, 87, 94, 97, 103, 108, 110, 112,
     120, 121, 129,

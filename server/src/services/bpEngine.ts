@@ -5,6 +5,7 @@ import { round, clamp } from '../data/heroMeta.ts';
 import { counterNotes, synergy } from '../data/heroSynergy.ts';
 import {
   diagnose,
+  analyzeLineups,
   selection,
   fitCandidate,
   dimLabels,
@@ -14,11 +15,15 @@ import {
 } from './composition.ts';
 import { slotsFor, type Action, type Draft } from './draftState.ts';
 import { comfortCombos, scoutRoster, type Member } from './scouting.ts';
+import { readSettings } from './settings.ts';
+import { candidateRoles, roleBadge, rolePriority, type RolePreference } from './rolePriority.ts';
+import { forecast } from './draftForecast.ts';
 
 function context(db: DatabaseSync, draft: Draft) {
   const heroes = listHeroes(db);
   return {
     heroes,
+    playerShare: readSettings(db).playerPoolWeight,
     byId: new Map(heroes.map((h) => [h.id, h])),
     radiant: scoutRoster(db, draft.radiantPlayerIds),
     dire: scoutRoster(db, draft.direPlayerIds),
@@ -45,12 +50,12 @@ function localContext(db: DatabaseSync, draft: Draft) {
   cached.set(db, { key, value });
   return value;
 }
-function owners(heroId: number, members: Member[], side: Side) {
+function owners(heroId: number, members: Member[], side: Side, roles: number[]) {
   return members
     .flatMap((m) => {
       const h = m.pool.get(heroId);
-      if (!h) return [];
-      const { tournament: t, pub: p } = h;
+      if (!h || !roles.includes(m.role)) return [];
+      const { patchTournament: t, patchPub: p } = h;
       const games =
         side === 'radiant' ? t.radiantGames + p.radiantGames : t.direGames + p.direGames;
       const wins = side === 'radiant' ? t.radiantWins + p.radiantWins : t.direWins + p.direWins;
@@ -66,6 +71,7 @@ function owners(heroId: number, members: Member[], side: Side) {
           sideBonus,
           sideGames: games,
           sideWins: wins,
+          isPatch742Sample: h.isPatch742Sample,
         },
       ];
     })
@@ -85,7 +91,13 @@ const ranked = (a: { score: number; heroId: number }, b: { score: number; heroId
   b.score - a.score || a.heroId - b.heroId;
 
 function matchupMatrix(db: DatabaseSync, picks: Action[]) {
-  const matrix = new Map<string, { wins: number; games: number; source: string }>();
+  type Sample = {
+    wins: number;
+    games: number;
+    source: string;
+    prior?: { wins: number; games: number };
+  };
+  const matrix = new Map<string, Sample>();
   if (!picks.length) return matrix;
   const ids = picks.map((a) => a.heroId),
     params = ids.map(() => '?').join(',');
@@ -94,12 +106,6 @@ function matchupMatrix(db: DatabaseSync, picks: Action[]) {
       `SELECT * FROM patch_matchups WHERE hero_id IN (${params}) OR against_hero_id IN (${params})`,
     )
     .all(...ids, ...ids);
-  for (const row of patchRows)
-    matrix.set(row.hero_id + '/' + row.against_hero_id, {
-      games: Number(row.games_played),
-      wins: Number(row.wins),
-      source: '本版职业赛',
-    });
   const rows = db
     .prepare(
       `SELECT * FROM hero_matchups WHERE games_played>0 AND
@@ -119,6 +125,17 @@ function matchupMatrix(db: DatabaseSync, picks: Action[]) {
       games: Number(r.games_played),
       source: '同步样本',
     });
+  }
+  // 同一对位可能出现在两张表里。职业赛作为主样本，跨版样本仅用于小样本收缩。
+  const prior = new Map(matrix);
+  for (const row of patchRows) {
+    const games = Number(row.games_played),
+      wins = Number(row.wins);
+    for (const [key, victories] of [
+      [row.hero_id + '/' + row.against_hero_id, wins],
+      [row.against_hero_id + '/' + row.hero_id, games - wins],
+    ] as const)
+      matrix.set(key, { games, wins: victories, source: '本版职业赛', prior: prior.get(key) });
   }
   return matrix;
 }
@@ -143,6 +160,16 @@ function matchup(
       reverse = e.id + '/' + h.id;
     const direct = matrix.get(key),
       sample = direct ?? matrix.get(reverse);
+    const special =
+      h.tags.includes('antiHeal') && e.tags.includes('highRegen')
+        ? '压制回复型前排'
+        : h.tags.includes('aoeClear') && e.tags.includes('illusionSummon')
+          ? '用范围伤害清幻象和召唤物'
+          : h.tags.includes('instantDisable') && e.tags.includes('highMobility')
+            ? '快速留住机动核心'
+            : h.tags.includes('backlineDive') && e.tags.includes('glassCannon')
+              ? '绕前排切输出位'
+              : '';
     const tactic = counterNotes.get(key),
       threat = counterNotes.get(reverse);
     let deltaPct: number | null = null;
@@ -150,29 +177,54 @@ function matchup(
       const wins = direct ? sample.wins : sample.games - sample.wins;
       // 以英雄自身高分段胜率为基线，十场先验衰减小样本对排名的影响。
       deltaPct = round((100 * wins) / sample.games - (h.meta.baseWinrate ?? 50));
-      impact += Math.max(-28, Math.min(28, (deltaPct * 2.5 * sample.games) / (sample.games + 10)));
+      const prior = sample.prior,
+        priorGames = prior ? Math.min(8, prior.games) : 0;
+      const priorDelta = prior ? (100 * prior.wins) / prior.games - (h.meta.baseWinrate ?? 50) : 0;
+      impact += Math.max(
+        -28,
+        Math.min(
+          28,
+          (2.5 * (deltaPct * sample.games + priorDelta * priorGames)) /
+            (sample.games + priorGames + 10),
+        ),
+      );
     }
     if (tactic) impact += 17;
+    else if (special) impact += 12;
     if (threat) impact -= 17;
-    const evidence = sample
-      ? sample.source +
-        '对阵' +
-        e.cnName +
-        ' ' +
-        sample.games +
-        ' 场，胜率较高分局基线 ' +
-        (deltaPct! >= 0 ? '+' : '') +
-        deltaPct +
-        ' 个百分点'
-      : '';
-    if (sample || tactic || threat)
+    const evidence =
+      sample && sample.games < 5
+        ? sample.source +
+          '对阵' +
+          e.cnName +
+          ' ' +
+          (direct ? sample.wins : sample.games - sample.wins) +
+          ' 胜 / ' +
+          sample.games +
+          ' 场，样本偏少'
+        : sample
+          ? sample.source +
+            '对阵' +
+            e.cnName +
+            ' ' +
+            sample.games +
+            ' 场，胜率较高分局基线 ' +
+            (deltaPct! >= 0 ? '+' : '') +
+            deltaPct +
+            ' 个百分点'
+          : '';
+    if (sample || tactic || threat || special)
       notes.push({
         vsHeroId: e.id,
         vsHeroName: e.cnName,
         kind: 'counter',
         deltaPct,
         games: sample?.games,
-        text: [evidence, tactic || (threat ? e.cnName + '可反制：' + threat : '')]
+        text: [
+          evidence,
+          tactic || (special ? '对阵' + e.cnName + '可' + special : ''),
+          threat ? e.cnName + '可反制：' + threat : '',
+        ]
           .filter(Boolean)
           .join('。'),
       });
@@ -200,17 +252,11 @@ const banLabels = {
   cheese_24th: '末手奇招',
   player_signature: '选手绝活',
 };
-function weights(members: Member[], lineSize: number, phase: number) {
-  const dataSlots = members.filter((m) => m.pool.size > 0).length;
-  let confidence = 0;
-  for (const member of members)
-    for (const h of member.pool.values()) {
-      confidence = Math.max(confidence, Math.min(1, (3 * h.tournament.games + h.pub.games) / 15));
-    }
-  const player = dataSlots ? confidence * Math.min(0.42, 0.31 + 0.025 * dataSlots) : 0;
-  const meta = lineSize === 0 ? 0.54 : 0.34,
-    composition = lineSize === 0 ? 0.21 : 0.38,
-    matchup = phase === 3 ? 0.21 : 0.17;
+function weights(members: Member[], lineSize: number, step: number, share: number) {
+  const player = members.some((m) => m.pool.size) ? share : 0;
+  const meta = lineSize === 0 ? 0.55 : 0.32,
+    matchup = lineSize === 0 ? 0.09 : step >= 16 ? 0.33 : 0.2,
+    composition = lineSize === 0 ? 0.21 : step >= 16 ? 0.26 : 0.35;
   return {
     meta: meta * (1 - player),
     composition: composition * (1 - player),
@@ -231,23 +277,13 @@ function candidate(
   isBan: boolean,
   matrix: ReturnType<typeof matchupMatrix>,
   w: ReturnType<typeof weights>,
+  roles: number[],
 ) {
-  const who = isBan ? '敌方' : '我方',
-    fit = fitCandidate(h, allies, audit, who);
-  const options = owners(h.id, members, side);
-  const vacant = members.filter((m) => audit.missingRoles.includes(m.role));
-  const owner =
-    options.find(
-      (o) =>
-        isBan || (vacant.some((m) => m.playerId === o.playerId) && h.typicalRoles.includes(o.role)),
-    ) ?? options.find((o) => isBan || audit.missingRoles.includes(o.role));
-  const role =
-    owner?.role ??
-    (audit.missingRoles.includes(fit.role)
-      ? fit.role
-      : (audit.missingRoles.find((r) => h.typicalRoles.includes(r)) ??
-        audit.missingRoles[0] ??
-        fit.role));
+  const open = roles.filter((r) => audit.missingRoles.includes(r));
+  const options = owners(h.id, members, side, open);
+  const owner = options[0];
+  const role = owner?.role ?? open[0] ?? roles[0];
+  const fit = fitCandidate(h, allies, audit, isBan ? '敌方' : '我方', role);
   const m = h.meta;
   const sideSample = m.sideBias?.[side];
   const sideText = sideSample?.games
@@ -286,13 +322,21 @@ function candidate(
         : side === draft.firstPickSide
           ? 50
           : 62;
-  const playerValue = owner ? clamp(owner.weightedScore + owner.sideBonus) : 0;
-  const flexThreat = isBan && options.filter(proficient).length >= 2 ? (phase === 1 ? 12 : 6) : 0;
+  const viable = open.length > 0 && m.tier !== 'T3';
+  const playerValue =
+    owner && viable
+      ? clamp(
+          owner.weightedScore +
+            owner.sideBonus +
+            (isBan && options.filter(proficient).length >= 2 ? 6 : 0),
+        )
+      : 0;
+  const openingPick = !isBan && phase === 1;
+  const compositionValue = openingPick ? fit.value * 0.65 + (role >= 4 ? 35 : 0) : fit.value;
   const score = round(
     clamp(
-      flexThreat +
-        w.meta * m.strength +
-        w.composition * fit.value +
+      w.meta * m.strength +
+        w.composition * compositionValue +
         w.matchup * edge.impact +
         w.strategy *
           clamp(
@@ -307,13 +351,12 @@ function candidate(
   const danger = edge.notes.find(
     (n) =>
       n.kind === 'counter' &&
-      enemies.some(e => e.hero.id === n.vsHeroId && (e.role ?? e.hero.typicalRoles[0]) <= 3) &&
+      enemies.some((e) => e.hero.id === n.vsHeroId && (e.role ?? e.hero.typicalRoles[0]) <= 3) &&
       (counterNotes.has(h.id + '/' + n.vsHeroId) || ((n.deltaPct ?? 0) > 2 && (n.games ?? 0) >= 5)),
   );
   const duo = edge.notes.find((n) => n.kind === 'synergy');
-  const fillsThreat = allies.length >= 2 && !!fit.fit.fillsRole && fit.value >= 75;
   const category =
-    owner && proficient(owner)
+    owner && viable && proficient(owner)
       ? 'player_signature'
       : danger
         ? 'protect_core'
@@ -333,6 +376,7 @@ function candidate(
           ' · ' +
           owner.role +
           ' 号位 · ' +
+          (owner.isPatch742Sample ? '7.42+ ' : '旧版参考') +
           [
             owner.tournament.games
               ? '赛事 ' + owner.tournament.wins + ' 胜 / ' + owner.tournament.games + ' 场'
@@ -366,6 +410,7 @@ function candidate(
             )?.text
           : undefined;
   const whyBan =
+    (phase > 1 ? '封锁敌方 ' + role + ' 号位。' : '') +
     motivation +
     '。' +
     (detailReason ? detailReason + '。' : '') +
@@ -392,7 +437,9 @@ function candidate(
     tier: m.tier,
     score,
     suggestedRole: role,
-    suggestedPlayerId: owner?.playerId ?? null,
+    ...roleBadge(h),
+    playerContribution: round(w.player * playerValue),
+    suggestedPlayerId: owner?.isPatch742Sample ? owner.playerId : null,
     shortTags: isBan ? [banLabels[category], m.tier] : [role + ' 号位', flex ? '可摇摆' : m.tier],
     reasons: [
       isBan ? whyBan : fit.fit.text,
@@ -405,7 +452,12 @@ function candidate(
     targetPlayers: options.map(identity),
   };
 }
-export function recommend(db: DatabaseSync, draft: Draft, previewHeroId?: number) {
+export function recommend(
+  db: DatabaseSync,
+  draft: Draft,
+  previewHeroId?: number,
+  preference: RolePreference = 'auto',
+) {
   const data = localContext(db, draft),
     our = draft.ourSide,
     enemy = opposite(our),
@@ -423,8 +475,12 @@ export function recommend(db: DatabaseSync, draft: Draft, previewHeroId?: number
     members.filter((m) => !picks.some((a) => a.assignedPlayerId === m.playerId));
   const own = available(data[our].members, ours),
     opp = available(data[enemy].members, theirs);
-  const pickWeights = weights(own, allies.length, step.phase),
-    banWeights = weights(opp, enemies.length, step.phase);
+  const pickWeights = weights(own, allies.length, step.step, data.playerShare),
+    banWeights = weights(opp, enemies.length, step.step, data.playerShare);
+  const roleModes = {
+    pick: rolePriority(preference, step.step, ourAudit, false),
+    ban: rolePriority(preference, step.step, theirAudit, true),
+  };
   const matrix = matchupMatrix(db, [...ours, ...theirs]),
     used = new Set(draft.actions.map((a) => a.heroId));
   const bans = [],
@@ -433,7 +489,8 @@ export function recommend(db: DatabaseSync, draft: Draft, previewHeroId?: number
     flexPicks = [];
   for (const h of data.heroes) {
     if (used.has(h.id) || step.isCompleted) continue;
-    if (ours.length < 5)
+    const pickRoles = candidateRoles(h, roleModes.pick, step.step <= 9, ourAudit.missingRoles);
+    if (ours.length < 5 && pickRoles.length)
       picksRanked.push(
         candidate(
           h,
@@ -447,9 +504,12 @@ export function recommend(db: DatabaseSync, draft: Draft, previewHeroId?: number
           false,
           matrix,
           pickWeights,
+          pickRoles,
         ),
       );
     if (theirs.length === 5) continue;
+    const banRoles = candidateRoles(h, roleModes.ban, false, theirAudit.missingRoles);
+    if (!banRoles.length) continue;
     const ban = candidate(
       h,
       enemies,
@@ -462,9 +522,15 @@ export function recommend(db: DatabaseSync, draft: Draft, previewHeroId?: number
       true,
       matrix,
       banWeights,
+      banRoles,
     );
     bans.push(ban);
-    const targets = owners(h.id, opp, enemy);
+    const targets = owners(
+      h.id,
+      opp,
+      enemy,
+      banRoles.filter((r) => theirAudit.missingRoles.includes(r)),
+    );
     if (targets.length) {
       const o = targets[0];
       topBans.push({
@@ -498,10 +564,23 @@ export function recommend(db: DatabaseSync, draft: Draft, previewHeroId?: number
           ).fit,
         }
       : null;
+  const composition = analyzeLineups(
+    ourAudit,
+    theirAudit,
+    step.isCompleted ? [] : data.heroes.filter((h) => !used.has(h.id)),
+  );
   return {
     currentStep: step,
-    lineupAudit: ourAudit,
-    composition: { our: ourAudit, enemy: theirAudit },
+    lineupAudit: { ...ourAudit, warnings: composition.our.warnings },
+    composition,
+    effectiveRoleMode: roleModes[step.actionType],
+    roleModes,
+    ...forecast(
+      { picks: allies, audit: ourAudit },
+      { picks: enemies, audit: theirAudit },
+      our,
+      (hero, friends, foes) => matchup(hero, friends, foes, matrix).impact,
+    ),
     preview,
     weights: { pick: pickWeights, ban: banWeights },
     patch: data.heroes[0]?.meta.patch,

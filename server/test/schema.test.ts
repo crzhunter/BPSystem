@@ -28,7 +28,7 @@ test('迁移可重入，保留已有数据和版本，启用外键', (t) => {
   db.exec("UPDATE heroes SET cn_name='保留名称' WHERE id=1");
   migrate(db);
   assert.equal(db.prepare('SELECT cn_name FROM heroes WHERE id=1').get()?.cn_name, '保留名称');
-  assert.equal(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()?.n, 4);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()?.n, 5);
 });
 test('我方、先选方可独立设置，禁选顺序与槽位均受约束', (t) => {
   const db = openDb(':memory:');

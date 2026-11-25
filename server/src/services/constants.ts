@@ -169,9 +169,28 @@ export function parseConstants(input: Inputs) {
   );
   const since = Math.floor(Date.parse(String(patches[0]?.date)) / 1000);
   upstream(Number.isSafeInteger(since) && since > 0);
-  return { patch, heroes, items, since };
+  const floor = patches.find((p) => p.name === '7.42');
+  upstream(floor);
+  const id = numberField(floor.id, 1),
+    startTime = Math.floor(Date.parse(String(floor.date)) / 1000);
+  upstream(Number.isSafeInteger(startTime) && startTime > 0);
+  const ids = patches.map((p) => numberField(p.id)).filter((n) => n >= id);
+  upstream(new Set(ids).size === ids.length);
+  const calendar = patches.map((p) => ({
+    id: numberField(p.id),
+    start: Math.floor(Date.parse(String(p.date)) / 1000),
+  }));
+  upstream(calendar.every((p) => Number.isSafeInteger(p.start) && p.start > 0));
+  return {
+    patch,
+    heroes,
+    items,
+    since,
+    scope: { id, startTime, ids, calendar, verifiedThrough: Math.floor(Date.now() / 1000) },
+  };
 }
 export type Constants = {
+  scope?: ReturnType<typeof parseConstants>['scope'];
   patch: string;
   matchups: MatchupSample[];
   items: ReturnType<typeof parseConstants>['items'];

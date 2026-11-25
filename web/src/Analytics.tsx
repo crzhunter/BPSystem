@@ -10,6 +10,11 @@ type Signature = {
   grade: string;
   weightedScore: number;
   source: string;
+  patch742Games: number;
+  patch742Wins: number;
+  patchPub: Stats;
+  patchTournament: Stats;
+  isPatch742Sample: boolean;
   pub: Stats & { recentGames: number };
   tournament: Stats;
 };
@@ -65,8 +70,9 @@ export function SlotIntel({ id, side, revision }: { id: number; side: Side; revi
       {profile.heroPool.slice(0, 3).map((h) => (
         <span className="hero-pill" key={h.heroId}>
           <b>{h.name}</b>
-          {h.tournament.games > 0 && <small>赛 {pct(h.tournament.winrate)}</small>}
-          {h.pub.games > 0 && <small>路 {pct(h.pub.winrate)}</small>}
+          <small>{h.isPatch742Sample ? '7.42 样本' : '旧版参考'}</small>
+          {h.patchTournament.games > 0 && <small>赛 {pct(h.patchTournament.winrate)}</small>}
+          {h.patchPub.games > 0 && <small>路 {pct(h.patchPub.winrate)}</small>}
         </span>
       ))}
     </div>
@@ -91,7 +97,7 @@ function ProfileCard({ player }: { player: Player }) {
   return (
     <section className="analysis-card">
       {p.privacyHint && <p className="notice">{p.privacyHint}</p>}
-      <h3>近期路人状态</h3>
+      <h3>7.42+ 近期路人状态</h3>
       {form.games ? (
         <>
           <p>
@@ -105,7 +111,7 @@ function ProfileCard({ player }: { player: Player }) {
       ) : (
         <p>暂无逐场路人记录</p>
       )}
-      <h3>阵营胜率</h3>
+      <h3>7.42+ 阵营胜率</h3>
       <div className="side-stats">
         {(['combined', 'tournament', 'pub'] as const).map((source, i) => {
           const s = p.sideSplits[source];
@@ -131,10 +137,10 @@ function ProfileCard({ player }: { player: Player }) {
             {h.grade} · {h.name}
           </b>
           <span>
-            {h.source} · 加权分 {h.weightedScore}
+            {h.isPatch742Sample ? '7.42 样本 · ' + h.patch742Wins + ' 胜 / ' + h.patch742Games + ' 场' : '旧版参考 · 过往曾用'} · 加权分 {h.weightedScore}
           </span>
           <small>
-            比赛 {h.tournament.games} 场 · 胜率 {pct(h.tournament.winrate)}　路人 {h.pub.games} 场 · 胜率{' '}
+            历史比赛 {h.tournament.games} 场 · 胜率 {pct(h.tournament.winrate)}　生涯路人 {h.pub.games} 场 · 胜率{' '}
             {pct(h.pub.winrate)}（近期 {h.pub.recentGames} 场）
           </small>
         </div>

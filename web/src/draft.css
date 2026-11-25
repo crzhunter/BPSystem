@@ -313,3 +313,27 @@
 .item-icon{position:absolute;inset:0;background-image:url(/art/items.webp);background-repeat:no-repeat}
 
 .ban-kind{display:inline-block;margin-right:4px;color:#f0bd9a;font-size:10px}.steps span:nth-child(9),.steps span:nth-child(18){border-right:2px solid #899388}
+
+.position-choice { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
+.position-choice legend { margin-bottom: 5px; color: var(--gold); font-weight: 650; }
+.position-choice .role-chips, .adv-components, .draft-risks article > div { display: flex; gap: 4px; flex-wrap: wrap; }
+.position-choice .role-chips + .role-chips { margin-top: 4px; }
+.position-choice button { flex: 1; min-height: 28px; }
+.position-choice p, .draft-risks p { margin: 5px 0; color: #bac6bc; font-size: 12px; }
+.draft-risks { display: grid; gap: 8px; margin-top: 9px; }
+.draft-risks article { border-left: 2px solid #a88d5a; background: #222925; padding: 7px 9px; }
+.draft-risks article[data-severity=high] { border-color: var(--dire); }
+.draft-risks small, .lane-forecast small { color: var(--quiet); font-size: 10px; }
+.draft-risks button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 5px; background: #303b32; color: #e5ede3; border-radius: 3px; }
+.draft-risks button :is(img,.face-fallback) { width: 28px; height: 19px; object-fit: cover; }
+.bp-balance { padding: 10px 12px; }
+.bp-balance header, .balance-labels { display: flex; align-items: baseline; justify-content: space-between; gap: 5px 12px; flex-wrap: wrap; }
+.bp-balance header span, .adv-components { color: var(--quiet); font-size: 11px; }
+.balance-labels { margin: 6px 0 3px; color: var(--radiant); font-variant-numeric: tabular-nums; }
+.balance-labels b:last-child { color: var(--dire); }
+.balance-track { overflow: hidden; height: 8px; border-radius: 2px; background: var(--dire); }
+.balance-track i { display: block; height: 100%; background: var(--radiant); border-right: 2px solid #191e1c; }
+.adv-components { gap: 4px 12px; margin-top: 4px; }
+.lane-forecast { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; margin-top: 8px; }
+.lane-forecast > div { display: grid; align-content: start; gap: 2px; background: #232c26; padding: 5px 7px; }
+.lane-forecast span { color: #ccd5cc; font-size: 11px; overflow-wrap: anywhere; }

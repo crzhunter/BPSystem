@@ -46,7 +46,7 @@ export function systemRoutes(db: DatabaseSync, client: OpenDotaClient, port: num
   });
   r.get('/settings', (_req, res) => res.json(readSettings(db)));
   r.put('/settings', (req, res) => {
-    const { opendotaApiKey, tournamentMatchWeight, pubRecentDays } = req.body;
+    const { opendotaApiKey, tournamentMatchWeight, pubRecentDays, playerPoolWeight } = req.body;
     transaction(db, () => {
       const set = db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?,?)');
       const now = new Date().toISOString();
@@ -60,7 +60,11 @@ export function systemRoutes(db: DatabaseSync, client: OpenDotaClient, port: num
             tournamentMatchWeight <= 100,
           '赛事权重须在 0 至 100 之间',
         );
-        set.run('tournament_match_weight', String(tournamentMatchWeight), now);
+        set.run('tournament_match_weight', String(Math.min(8, tournamentMatchWeight)), now);
+      }
+      if (playerPoolWeight !== undefined) {
+        check(typeof playerPoolWeight === 'number' && Number.isFinite(playerPoolWeight), '英雄池权重须为数值');
+        set.run('player_pool_weight', String(Math.max(0.15, Math.min(0.20, playerPoolWeight))), now);
       }
       if (pubRecentDays !== undefined)
         set.run('pub_recent_days', String(integer(pubRecentDays, 1, 365, '天梯统计天数')), now);

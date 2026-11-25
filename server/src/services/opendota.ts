@@ -11,7 +11,7 @@ import {
   matchupSamples,
 } from './constants.ts';
 import { storeConstants } from '../data/catalog.ts';
-import { apiKey } from './settings.ts';
+import { apiKey, fillMissingPatches, patchScope } from './settings.ts';
 import { HttpError } from '../utils/input.ts';
 import {
   bit,
@@ -174,6 +174,7 @@ export class OpenDotaClient {
       const query = new URLSearchParams({ limit: '50' });
       for (const field of [
         'hero_id',
+        'patch',
         'start_time',
         'kills',
         'deaths',
@@ -190,6 +191,23 @@ export class OpenDotaClient {
     } catch (error) {
       if (!(error instanceof HttpError) || error.status === 503) throw error;
       matches = rows(await read('/recentMatches', []));
+    }
+    // patch 是等值筛选。出现后续大版本时逐个查询再合并，不能只取最新一版。
+    const scoped = new Map<number, { games: number; wins: number }>();
+    let completeScope = true;
+    const scope = patchScope(this.db);
+    for (const patch of scope.ids) {
+      const scopedRows = rows(await read('/heroes?patch=' + patch, []));
+      if (!scopedRows.length) completeScope = false;
+      for (const h of scopedRows) {
+        const games = numberField(h.games),
+          wins = numberField(h.win);
+        upstream(wins <= games);
+        if (!games) continue;
+        const hero = numberField(h.hero_id, 1),
+          prior = scoped.get(hero);
+        scoped.set(hero, { games: (prior?.games ?? 0) + games, wins: (prior?.wins ?? 0) + wins });
+      }
     }
     const now = new Date().toISOString();
     const playedHeroes = heroes.filter((h) => numberField(h.games) > 0);
@@ -215,11 +233,14 @@ export class OpenDotaClient {
           now,
           id,
         );
-      if (heroes.length) this.db.prepare('DELETE FROM player_pub_heroes WHERE player_id=?').run(id);
       const heroInsert = this.db.prepare(
-        'INSERT INTO player_pub_heroes VALUES(?,?,?,?,?,?,?,?,?,?)',
+        `INSERT INTO player_pub_heroes(player_id,hero_id,games,wins,last_played,with_games,with_wins,
+          against_games,against_wins,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(player_id,hero_id) DO UPDATE SET games=excluded.games,wins=excluded.wins,
+          last_played=excluded.last_played,with_games=excluded.with_games,with_wins=excluded.with_wins,
+          against_games=excluded.against_games,against_wins=excluded.against_wins,updated_at=excluded.updated_at`,
       );
-      for (const h of heroes) {
+      for (const h of playedHeroes) {
         const games = numberField(h.games),
           wins = numberField(h.win);
         upstream(wins <= games);
@@ -236,8 +257,21 @@ export class OpenDotaClient {
           now,
         );
       }
+      const patchInsert = this.db.prepare(`INSERT INTO player_pub_heroes
+        (player_id,hero_id,games,wins,with_games,with_wins,against_games,against_wins,updated_at,patch_games,patch_wins)
+        VALUES(?,?,0,0,0,0,0,0,?,?,?) ON CONFLICT(player_id,hero_id) DO UPDATE
+        SET patch_games=excluded.patch_games,patch_wins=excluded.patch_wins`);
+      if (completeScope && !privateProfile)
+        this.db
+          .prepare('UPDATE player_pub_heroes SET patch_games=0,patch_wins=0 WHERE player_id=?')
+          .run(id);
+      if (completeScope)
+        for (const [hero, counts] of scoped)
+          patchInsert.run(id, hero, now, counts.games, counts.wins);
       const matchInsert = this.db.prepare(
-        'INSERT OR REPLACE INTO player_pub_matches VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        `INSERT OR REPLACE INTO player_pub_matches(player_id,match_id,hero_id,player_slot,side,is_radiant,
+          win,start_time,duration,kills,deaths,assists,gpm,xpm,lane,lane_role,game_mode,lobby_type,party_size,patch)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,COALESCE(?,(SELECT patch FROM player_pub_matches WHERE player_id=? AND match_id=?)))`,
       );
       for (const m of matches.slice(0, 50)) {
         if (Number(m.leagueid) > 0) continue;
@@ -264,8 +298,12 @@ export class OpenDotaClient {
             m.lobby_type,
             m.party_size,
           ].map(optionalNumber),
+          optionalNumber(m.patch),
+          id,
+          numberField(m.match_id, 1),
         );
       }
+      fillMissingPatches(this.db, scope, id);
     });
   }
   async syncConstants() {

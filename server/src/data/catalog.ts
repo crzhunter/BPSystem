@@ -4,6 +4,7 @@ import { heroTags } from './heroTags.ts';
 import { deriveMeta, type HeroMeta, type PrimaryAttr, cdn } from './heroMeta.ts';
 import type { Constants } from '../services/constants.ts';
 import type { Item } from './itemsSnapshot.ts';
+import { fillMissingPatches } from '../services/settings.ts';
 
 export function storeConstants(db: DatabaseSync, data: Constants, now: string) {
   upsertHeroes(db, data.heroes, now);
@@ -18,6 +19,10 @@ export function storeConstants(db: DatabaseSync, data: Constants, now: string) {
   const item = db.prepare('INSERT OR REPLACE INTO items VALUES(?,?,?,?,?)');
   for (const i of data.items) item.run(i.id, i.key, i.cnName, i.localizedName, i.imgUrl);
   db.prepare("INSERT OR REPLACE INTO settings VALUES('constants_patch',?,?)").run(data.patch, now);
+  if (data.scope) {
+    db.prepare("INSERT OR REPLACE INTO settings VALUES('patch_742_scope',?,?)").run(JSON.stringify(data.scope), now);
+    fillMissingPatches(db, data.scope);
+  }
 }
 export function listItems(db: DatabaseSync) {
   return db.prepare('SELECT * FROM items ORDER BY id').all() as unknown as Item[];

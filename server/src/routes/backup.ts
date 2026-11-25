@@ -3,6 +3,7 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
 import { normalizeDraft, readSession } from '../services/draftState.ts';
 import { check, HttpError } from '../utils/input.ts';
+import { fillMissingPatches, patchScope } from '../services/settings.ts';
 
 const tables = [
   'settings',
@@ -19,7 +20,7 @@ const tables = [
   'draft_actions',
   'hero_matchups',
 ] as const;
-const settingsWhere = " WHERE key IN ('pub_recent_days','tournament_match_weight')";
+const settingsWhere = " WHERE key IN ('pub_recent_days','tournament_match_weight','player_pool_weight')";
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -55,7 +56,8 @@ function validateSetting(row: Record<string, unknown>) {
       row.value.trim() &&
       Number.isFinite(n) &&
       ((row.key === 'pub_recent_days' && Number.isInteger(n) && n >= 1 && n <= 365) ||
-        (row.key === 'tournament_match_weight' && n >= 0 && n <= 100)),
+        (row.key === 'tournament_match_weight' && n >= 0 && n <= 100) ||
+        (row.key === 'player_pool_weight' && n >= 0.15 && n <= 0.20)),
     '备份中的分析设置无效',
   );
 }
@@ -71,16 +73,16 @@ export function backupRoutes(db: DatabaseSync) {
       ),
     );
     res.attachment('BPSystem-' + new Date().toISOString().slice(0, 10) + '.json');
-    res.json({ version: 3, exportedAt: new Date().toISOString(), ...data });
+    res.json({ version: 4, exportedAt: new Date().toISOString(), ...data });
   });
   r.post('/backup/import', (req, res) => {
     const snapshot: Record<string, unknown> = req.body;
     check(
-      (snapshot.version === 2 || snapshot.version === 3) &&
+      (snapshot.version === 2 || snapshot.version === 3 || snapshot.version === 4) &&
         typeof snapshot.exportedAt === 'string' &&
         Number.isFinite(Date.parse(snapshot.exportedAt)) &&
         tables.every((t) => Array.isArray(snapshot[t])),
-      '请选择完整的二期或三期 JSON 备份',
+      '请选择完整的 v2、v3 或 v4 JSON 备份',
     );
     try {
       const counts = transaction(db, () => {
@@ -101,6 +103,11 @@ export function backupRoutes(db: DatabaseSync) {
           );
           const rows = snapshot[t] as unknown[];
           for (let row of rows) {
+            // 旧快照只有生涯统计。保留原值，新版本的有效样本从逐场记录推断。
+            if (snapshot.version !== 4 && object(row)) {
+              if (t === 'player_pub_heroes') row = { ...row, patch_games: 0, patch_wins: 0 };
+              else if (t === 'player_pub_matches') row = { ...row, patch: null };
+            }
             if (t === 'draft_sessions' && snapshot.version === 2 && object(row)) {
               const empty = '[null,null,null,null,null]';
               row = { ...row, radiant_players_json: empty, dire_players_json: empty, revision: 1 };
@@ -140,7 +147,7 @@ export function backupRoutes(db: DatabaseSync) {
           }
           counts[t] = rows.length;
         }
-        if (snapshot.version === 3) {
+        if (snapshot.version !== 2) {
           // 备份恢复也经过实时对局的顺序、重复英雄和归属校验，避免绕过普通写入入口。
           const actions = db.prepare(`SELECT step_index step,action_type actionType,side,
             hero_id heroId,assigned_player_id assignedPlayerId,role_hint roleHint
@@ -150,6 +157,7 @@ export function backupRoutes(db: DatabaseSync) {
             normalizeDraft(db, { ...session, actions: actions.all(row.id) });
           }
         }
+        if (snapshot.version !== 4) fillMissingPatches(db, patchScope(db));
         db.exec('DELETE FROM api_cache');
         return counts;
       });

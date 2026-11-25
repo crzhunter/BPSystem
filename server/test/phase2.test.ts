@@ -18,7 +18,7 @@ function tournament(id: number) {
     start_time: now,
     duration: 1800,
     radiant_win: false,
-    patch: 58,
+    patch: 61,
     radiant_team: { name: '甲队' },
     dire_team: { name: '乙队' },
     picks_bans: [
@@ -129,7 +129,7 @@ test('v1 原位升级保留既有阵容、比赛和自定义权重；新库采�
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((r) => r.version),
-      [1, 2, 3, 4],
+      [1, 2, 3, 4, 5],
     );
     db.exec('DELETE FROM settings');
     assert.equal(readSettings(db).tournamentMatchWeight, 4);
@@ -228,7 +228,7 @@ test('同步、去重、多来源阵营胜率和加权池，修改设置立即�
       return [
         pub(901, 0, true),
         pub(902, 128, false, now - 10),
-        pub(903, 128, true, now - 80 * 86400),
+        { ...pub(903, 128, true, now - 80 * 86400), patch: 60 },
         pub(900, 0, false),
         pub(899, 0, false, now - 30, 3),
       ];
@@ -245,18 +245,18 @@ test('同步、去重、多来源阵营胜率和加权池，修改设置立即�
   const a = await f.req('/players/1/analytics');
   assert.deepEqual(a.sideSplits.pub, {
     radiant: { games: 2, wins: 1, winrate: 50 },
-    dire: { games: 2, wins: 1, winrate: 50 },
-    delta: 0,
+    dire: { games: 1, wins: 1, winrate: 100 },
+    delta: -50,
   });
   assert.deepEqual(a.sideSplits.tournament.radiant, { games: 1, wins: 0, winrate: 0 });
   assert.equal(a.sideSplits.combined.radiant.winrate, 33.33);
-  assert.equal(a.sideSplits.combined.delta, -16.67);
-  assert.equal(a.recentForm.games, 4);
+  assert.equal(a.sideSplits.combined.delta, -66.67);
+  assert.equal(a.recentForm.games, 3);
   assert.equal(a.recentForm.avgKda, 5);
   assert.equal(a.recentForm.avgGpm, 400);
   assert.equal(a.recentForm.avgXpm, 500);
   assert.deepEqual(a.recentForm.streak, { count: 2, type: '连胜' });
-  assert.equal(a.roleDistribution[0].games, 4);
+  assert.equal(a.roleDistribution[0].games, 3);
   const hero = a.heroPool.find((h: { heroId: number }) => h.heroId === 1);
   assert.equal(hero.source, '双源融合');
   assert.equal(hero.pub.games, 19);
@@ -383,7 +383,7 @@ test('JSON 全量往返，密钥留在本机，错误外键与无效 JSON 数据
   await f.req('/matches/import', 'POST', { matchIds: [789] });
   await f.req('/settings', 'PUT', { opendotaApiKey: 'local-test-secret', pubRecentDays: 37 });
   const snap = await f.req('/backup/export');
-  assert.equal(snap.version, 3);
+  assert.equal(snap.version, 4);
   assert.ok(!JSON.stringify(snap).includes('local-test-secret'));
   assert.equal(snap.match_players.length, 10);
   assert.equal(snap.player_pub_heroes.length, 1);

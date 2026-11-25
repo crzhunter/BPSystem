@@ -7,6 +7,7 @@ import { patchMatchups } from '../data/matchupsSnapshot.ts';
 import { heroSnapshot, sampledAt, snapshotPatch } from '../data/snapshot.ts';
 import { itemsSnapshot } from '../data/itemsSnapshot.ts';
 import { storeConstants } from '../data/catalog.ts';
+import { fillMissingPatches, patchScope } from '../services/settings.ts';
 
 export const root = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -43,6 +44,7 @@ export function migrate(db: DatabaseSync) {
           },
           sampledAt,
         );
+      if (version === 5) fillMissingPatches(db, patchScope(db));
       db.prepare('INSERT INTO schema_migrations VALUES (?,?)').run(
         version,
         new Date().toISOString(),

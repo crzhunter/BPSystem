@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Activity } from 'lucide-react';
 import { type Advice, type Side, sideNames } from './draftModel';
+import { Portrait } from './HeroPoolGrid';
 const names = {
   disable: '先手硬控',
   frontline: '前排承伤',
@@ -12,16 +13,26 @@ const names = {
 export function CompositionMeter({
   data,
   our,
-  preview,
+  preview: candidate,
+  select,
 }: {
   data: Advice;
   our: Side;
   preview: Advice['preview'];
+  select: (id: number) => void;
 }) {
   const [view, setView] = useState<'our' | 'enemy'>('our');
-  const key = preview ? (preview.side === our ? 'our' : 'enemy') : view,
-    c = data.composition[key],
+  const key = view,
+    preview = candidate && (candidate.side === our) === (key === 'our') ? candidate : null,
+    c = data.composition[view],
     damage = c.damageProfile;
+  const risks =
+    key === 'our'
+      ? data.composition.our.weaknesses.map((w) => ({ ...w, heroes: w.fixHeroes }))
+      : data.composition.enemy.exploitableWeaknesses.map((w) => ({
+          ...w,
+          heroes: w.counterHeroes,
+        }));
   return (
     <section className="meter bp-box" id="composition">
       <div className="bp-section-title">
@@ -31,13 +42,8 @@ export function CompositionMeter({
         </h2>
         <div className="role-chips">
           {(['our', 'enemy'] as const).map((v) => (
-            <button
-              key={v}
-              disabled={!!preview}
-              onClick={() => setView(v)}
-              aria-pressed={key === v}
-            >
-              {v === 'our' ? '我方' : '对方'}
+            <button key={v} onClick={() => setView(v)} aria-pressed={key === v}>
+              {v === 'our' ? '我方补强' : '敌方破阵'}
             </button>
           ))}
         </div>
@@ -93,10 +99,36 @@ export function CompositionMeter({
         近战 {c.rangeBalance.meleeCount} · 远程 {c.rangeBalance.rangedCount}
       </p>
       <div className="diag-pills">
-        {[...c.warnings, ...c.strengths].map((t) => (
-          <span key={t} className={c.strengths.includes(t) ? 'strength' : ''}>
+        {c.strengths.map((t) => (
+          <span key={t} className="strength">
             {t}
           </span>
+        ))}
+      </div>
+      {!c.assignments.length && (
+        <p className="range-line">等待{key === 'our' ? '我方' : '敌方'}亮出首个英雄。</p>
+      )}
+      <div className="draft-risks">
+        {risks.map((w) => (
+          <article key={w.id} data-severity={w.severity}>
+            <strong>{w.title}</strong>
+            <p>{w.detail}</p>
+            {!!w.heroes.length && <small>{key === 'our' ? '补强推荐' : '破阵克制推荐'}</small>}
+            <div>
+              {w.heroes.map((h) => (
+                <button
+                  key={h.heroId}
+                  title={h.reason}
+                  onClick={() => select(h.heroId)}
+                  aria-label={'选择' + h.cnName + '，' + h.reason}
+                >
+                  <Portrait hero={{ ...h, id: h.heroId }} />
+                  {h.cnName}
+                  <small>{h.role}号位</small>
+                </button>
+              ))}
+            </div>
+          </article>
         ))}
       </div>
     </section>

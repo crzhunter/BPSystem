@@ -1,3 +1,12 @@
+// OpenDota /constants/patch：7.42 发布于 2026-11-18T21:28:07.019Z，比赛时间精度为秒。
+export const patch742Id = 61;
+export const patch742StartTime = 1795037287;
+export function inPatch742(patch: unknown, startTime: number | null, scope: { id: number; startTime: number }) {
+  if (patch != null && /^\d+$/.test(String(patch))) return Number(patch) >= scope.id;
+  const version = /^(\d+)\.(\d+)[a-z]?$/.exec(String(patch));
+  if (version) return +version[1] > 7 || (+version[1] === 7 && +version[2] >= 42);
+  return (startTime ?? 0) >= scope.startTime;
+}
 export const attributes = ['str', 'agi', 'int', 'all'] as const;
 export type PrimaryAttr = (typeof attributes)[number];
 export const cdn = 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/';

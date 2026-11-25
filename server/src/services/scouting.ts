@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { analytics } from './analytics.ts';
+import { inPatch742 } from '../data/heroMeta.ts';
+import { patchScope } from './settings.ts';
 import type { Slots } from './draftState.ts';
 import type { Side } from '../data/cmOrder.ts';
 
@@ -29,14 +31,16 @@ export type Member = ReturnType<typeof scoutRoster>['members'][number];
 export function comfortCombos(db: DatabaseSync, slots: Slots) {
   const records = db
     .prepare(
-      `SELECT mp.match_id,mp.side,mp.hero_id,(m.radiant_win=mp.is_radiant) win
+      `SELECT mp.match_id,mp.side,mp.hero_id,m.patch,m.start_time,(m.radiant_win=mp.is_radiant) win
     FROM players p JOIN match_players mp ON mp.account_id=p.account_id JOIN matches m USING(match_id)
     WHERE p.id IN (?,?,?,?,?) AND m.source='tournament' AND m.radiant_win IS NOT NULL
     ORDER BY mp.match_id,mp.side,mp.hero_id`,
     )
     .all(...slots);
   const groups = new Map<string, { win: number; heroes: number[] }>();
+  const scope = patchScope(db);
   for (const row of records) {
+    if (!inPatch742(row.patch, Number(row.start_time), scope)) continue;
     const key = row.match_id + '/' + row.side;
     const group = groups.get(key) ?? { win: Number(row.win), heroes: [] as number[] };
     group.heroes.push(Number(row.hero_id));

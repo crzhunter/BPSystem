@@ -24,12 +24,17 @@ export function tacticalProfile(h: Hero) {
     burst: 32 * has('burst') + 6 * has('initiate'),
     sustain: 30 * carry + 12 * Number(h.roles.includes('Carry')),
     push: 36 * has('push') + 8 * carry,
-    teamfight: 34 * has('teamfight') + 25 * has('save'),
+    teamfight: 34 * has('teamfight') + 15 * has('save'),
   };
   // 输出结构是基于职责的阵容估计，不能解读为比赛实际伤害。
   const physical = carry ? 73 : h.tags.includes('burst') ? 22 : 44;
   const purePct = pure.has(h.id) ? 22 : 0;
-  return { scores, physicalPct: physical, magicPct: 100 - physical - purePct, purePct };
+  const physicalPct = [6, 35, 44, 46, 70, 81, 89, 109].includes(h.id)
+    ? 84
+    : [17, 22, 25, 26, 40, 52, 64, 101, 106].includes(h.id)
+      ? 16
+      : physical;
+  return { scores, physicalPct, magicPct: 100 - physicalPct - purePct, purePct };
 }
 export type Selection = { hero: Hero; role: number | null };
 export function selection(picks: Action[], slots: Slots, heroes: Map<number, Hero>): Selection[] {
@@ -114,6 +119,8 @@ export function diagnose(picks: Selection[]) {
       physicalPct > magicPct ? '输出偏物理，可补法术爆发' : '输出偏魔法，可补持续物理输出',
     );
   for (const k of dims) if (scores[k] >= 50) strengths.push(dimLabels[k] + '充足');
+  if (tagCounts.save) strengths.push('有救援手段，可接第一轮先手');
+  if (tagCounts.scout && tagCounts.push) strengths.push('能探坡带线，便于压外塔');
   return {
     coveredRoles,
     missingRoles,
@@ -127,8 +134,235 @@ export function diagnose(picks: Selection[]) {
   };
 }
 export type Diagnosis = ReturnType<typeof diagnose>;
-export function fitCandidate(h: Hero, line: Selection[], before: Diagnosis, who: string) {
-  const after = diagnose([...line, { hero: h, role: null }]);
+type Answer = {
+  id: string;
+  severity: 'high' | 'medium';
+  title: string;
+  detail: string;
+  accepts: (hero: Hero) => boolean;
+  reason: string;
+};
+const has =
+  (...tags: Tag[]) =>
+  (h: Hero) =>
+    tags.some((t) => h.tags.includes(t));
+function signals(a: Diagnosis, opposing: Diagnosis, attack: boolean): Answer[] {
+  const n = a.assignments.length,
+    t = a.tagCounts,
+    d = a.damageProfile;
+  if (!n) return [];
+  const result: Answer[] = [];
+  function add(
+    condition: boolean,
+    id: string,
+    title: string,
+    detail: string,
+    accepts: Answer['accepts'],
+    reason: string,
+    severity: Answer['severity'] = 'medium',
+  ) {
+    if (condition) result.push({ id, title, severity, detail, accepts, reason });
+  }
+  if (attack) {
+    add(
+      !t.instantDisable,
+      'low-control',
+      '敌方缺快速留人',
+      '逼出第一轮控制后再切后排，敌方很难留住机动核。',
+      has('highMobility'),
+      '绕过前排切双辅，逼完技能再撤。',
+    );
+    add(
+      t.highRegen > 0,
+      'regen',
+      '敌方依赖回复扛伤',
+      '先压回复或破被动，再集火肉核，别把爆发分摊给前排。',
+      has('antiHeal'),
+      '压低肉核血线，缩短对手回满血的窗口。',
+      'high',
+    );
+    add(
+      t.illusionSummon > 0,
+      'summons',
+      '敌方靠幻象或召唤物铺场',
+      '留一轮范围伤害清兵和分身，避免被带线牵制。',
+      has('aoeClear'),
+      '范围清场后再找本体。',
+      'high',
+    );
+    add(
+      t.greedyCore >= 2 || (n >= 2 && !t.push),
+      'tempo',
+      '敌方需要发育时间',
+      '抢外塔、占野区，逼对手在关键装之前接团。',
+      has('push'),
+      '带队拆外塔，压缩敌核安全发育区。',
+    );
+    add(
+      d.magicPct >= 65 || (t.glassCannon > 0 && !t.save),
+      'backline',
+      '敌方后排怕冲脸',
+      d.magicPct >= 65
+        ? '对方伤害偏法术，围绕黑皇杖强势期跳过前排。'
+        : '后排缺少保护，先手切断输出和救援。',
+      has('backlineDive'),
+      '越过前排贴住施法位。',
+    );
+    add(
+      t.highMobility > 0 && !opposing.tagCounts.instantDisable,
+      'mobility',
+      '敌方机动核难留',
+      '控到第一拍再接爆发，别把关键技能交给残影或位移。',
+      has('instantDisable'),
+      '快速起手限制位移。',
+    );
+    return result;
+  }
+  add(
+    !t.instantDisable,
+    'catch',
+    '缺瞬发留人',
+    '先手需要前摇，容易被跳刀、相位转移和残影躲开。',
+    has('instantDisable'),
+    '补第一手控制，给队友接技能的时间。',
+    'high',
+  );
+  add(
+    !t.save,
+    'save',
+    '缺救人和驱散',
+    '第一人被开后很难重整阵型，留一手救援接应先手位。',
+    has('save'),
+    '保住被先手的队友，拖过第一轮爆发。',
+    'high',
+  );
+  add(
+    a.scores.teamfight < 25,
+    'teamfight',
+    '缺范围团控',
+    '狭口和肉山团难以同时限制多人。',
+    has('teamfight'),
+    '封住入口，给队伍第二轮技能创造空间。',
+  );
+  add(
+    a.scores.frontline < 30,
+    'front',
+    '前排扛不住第一轮',
+    '脆皮先露头容易直接掉人，补一个能顶在坡口的英雄。',
+    has('frontline'),
+    '先占坡，替后排承伤。',
+    'high',
+  );
+  add(
+    !t.scout,
+    'vision',
+    '缺探坡视野',
+    '过河排眼要靠人脸探，肉山刷新前尤其危险。',
+    has('scout'),
+    '先用技能或单位看坡，再让队友进场。',
+  );
+  add(
+    n >= 2 && d.physicalPct > 65,
+    'physical',
+    '物理输出过于集中',
+    '绿杖、缴械和高护甲容易拖掉输出窗口。',
+    (h) => tacticalProfile(h).magicPct >= 65,
+    '补法术伤害，惩罚虚无和堆甲。',
+  );
+  add(
+    n >= 2 && d.magicPct > 65,
+    'magic',
+    '法术输出过于集中',
+    '长笛和黑皇杖会吃掉第一轮爆发。',
+    (h) => tacticalProfile(h).physicalPct >= 70,
+    '补持续普攻，覆盖魔免窗口。',
+  );
+  add(
+    a.rangeBalance.meleeCount >= 3,
+    'melee',
+    '近战过多',
+    '正面容易挤在同一块地形，被范围控制和减速拉扯。',
+    (h) => h.attackType === 'Ranged',
+    '拉开阵型，从第二排接输出。',
+  );
+  add(
+    !t.push,
+    'push',
+    '赢团后难拆塔',
+    '缺少快速拔塔点，团战收益很难变成地图控制。',
+    has('push'),
+    '跟兵线压塔，把击杀换成建筑。',
+  );
+  add(
+    !t.roshan && n >= 2,
+    'roshan',
+    '控盾速度偏慢',
+    '敌核阵亡后也可能来不及收盾上高。',
+    has('roshan'),
+    '补打盾效率，争取先拿不朽盾。',
+  );
+  add(
+    t.greedyCore >= 2 || (n >= 2 && !t.laneDominator),
+    'lane',
+    t.greedyCore >= 2 ? '多核抢发育区' : '对线缺压制点',
+    '边路需要能主动换血、离线带节奏的英雄，给吃钱的核心腾出安全线。',
+    has('laneDominator'),
+    '靠对线施压打开第一片安全区。',
+  );
+  return result;
+}
+
+// 补强和破阵都由我方执行。先筛能解决该问题的英雄，再用我方空位和版本表现排序。
+export function analyzeLineups(our: Diagnosis, enemy: Diagnosis, pool: Hero[]) {
+  const regenReasons: Record<number, string> = {
+    68: '冰晶爆轰封锁回血，集火逼出斩杀线。',
+    69: '末日封治疗，阎刃按最大生命值持续烧血。',
+    47: '蝮蛇突袭破坏被动，先压依赖被动回复的肉核。',
+    40: '恶性瘟疫按最大生命值持续削血，给队友留集火窗口。',
+    92: '黄泉颤抖压攻速，佣兽跟进控制，限制靠普攻吸血的核心。',
+  };
+  function answers(rule: Answer) {
+    const role = (h: Hero) => h.typicalRoles.find((r) => our.missingRoles.includes(r));
+    // 冰魂、末日直接封治疗；破被动和按血量削血属于次选手段。
+    const direct = (h: Hero) => Number(rule.id === 'regen' && [68, 69].includes(h.id));
+    return pool
+      .filter(rule.accepts)
+      .sort(
+        (a, b) =>
+          Number(!!role(b)) - Number(!!role(a)) ||
+          direct(b) - direct(a) ||
+          b.meta.strength - a.meta.strength ||
+          a.id - b.id,
+      )
+      .slice(0, 3)
+      .map((h) => ({
+        heroId: h.id,
+        cnName: h.cnName,
+        portraitUrl: h.portraitUrl,
+        role: role(h) ?? h.typicalRoles[0],
+        reason: rule.id === 'regen' ? regenReasons[h.id] : rule.reason,
+      }));
+  }
+  const info = ({ id, severity, title, detail }: Answer) => ({ id, severity, title, detail });
+  const weaknesses = signals(our, enemy, false).map((rule) => ({
+    ...info(rule),
+    fixHeroes: answers(rule),
+  }));
+  const exploitableWeaknesses = signals(enemy, our, true).map((rule) => ({
+    ...info(rule),
+    counterHeroes: answers(rule),
+  }));
+  const warnings = [...new Set([...our.warnings, ...weaknesses.map((w) => w.title)])];
+  return { our: { ...our, warnings, weaknesses }, enemy: { ...enemy, exploitableWeaknesses } };
+}
+export function fitCandidate(
+  h: Hero,
+  line: Selection[],
+  before: Diagnosis,
+  who: string,
+  preferredRole: number | null = null,
+) {
+  const after = diagnose([...line, { hero: h, role: preferredRole }]);
   const delta = Object.fromEntries(
     dims.map((k) => [k, after.scores[k] - before.scores[k]]),
   ) as Record<Dim, number>;
@@ -156,6 +390,13 @@ export function fitCandidate(h: Hero, line: Selection[], before: Diagnosis, who:
   return {
     role,
     fit: { fillsRole, boostedDims, delta, text },
-    value: Math.min(100, (fillsRole ? 22 : 0) + gap * 0.46 + (balanced ? 8 : 0)),
+    value: Math.min(
+      100,
+      (fillsRole ? 22 : 0) +
+        gap * 0.46 +
+        (balanced ? 8 : 0) +
+        (before.rangeBalance.meleeCount >= 2 && h.attackType === 'Ranged' ? 8 : 0) +
+        (line.length && !before.tagCounts.save && h.tags.includes('save') ? 8 : 0),
+    ),
   };
 }

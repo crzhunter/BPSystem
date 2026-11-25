@@ -33,6 +33,7 @@ import { DraftHud } from './DraftHud';
 import { RecommendationPanel } from './RecommendationPanel';
 import { CompositionMeter } from './CompositionMeter';
 import { DraftArchive } from './DraftArchive';
+import type { RolePreference } from '../../server/src/services/rolePriority';
 
 export function Draft({
   players,
@@ -56,6 +57,7 @@ export function Draft({
     [pending, setPending] = useState<number | null>(null);
   const [instant, setInstant] = useState(false),
     search = useRef<HTMLInputElement>(null);
+  const [preference, setPreference] = useState<RolePreference>('auto');
   const [preview, setPreview] = useState<{ draft: Room; id: number; result: Advice['preview'] }>();
   const candidate = heroes.find((h) => h.id === pending);
   useEffect(() => {
@@ -115,9 +117,9 @@ export function Draft({
   }, [players, teams, ready]);
   useEffect(() => {
     let active = true;
-    api<Advice>('/bp/recommend', 'POST', d)
+    api<Advice>('/bp/recommend', 'POST', { ...d, rolePreference: preference })
       .then((data) => {
-        if (!data.composition || !data.weights) throw new Error('当前端口仍在运行旧版 BP 服务，请重启服务以载入新版推荐。');
+        if (!data.roleModes || !data.bpAdvantage) throw new Error('当前端口仍在运行旧版 BP 服务，请重启服务以载入新版推荐。');
         if (active) setAnalysis({ draft: d, revision, data });
       })
       .catch((e) => {
@@ -126,7 +128,7 @@ export function Draft({
     return () => {
       active = false;
     };
-  }, [d, revision, ready]);
+  }, [d, revision, ready, preference]);
   function change(next: Room) {
     setPending(null);
     setRedo([]);
@@ -218,7 +220,8 @@ export function Draft({
     play({
       heroId: id,
       assignedPlayerId: suggested?.suggestedPlayerId ?? null,
-      roleHint: suggested?.suggestedPlayerId ? suggested.suggestedRole : null,
+      roleHint: suggested && (suggested.suggestedPlayerId || (preference !== 'auto' &&
+        data?.composition.our.missingRoles.includes(suggested.suggestedRole))) ? suggested.suggestedRole : null,
     });
   }
   function select(id: number) {
@@ -396,6 +399,7 @@ export function Draft({
       )}
       <DraftHud
         d={d}
+        advice={data}
         players={players}
         heroes={heroes}
         assign={(i, a) => change({ ...d, actions: d.actions.map((old, j) => (i === j ? a : old)) })}
@@ -474,12 +478,14 @@ export function Draft({
             select={select}
             lock={lock}
           />
-          {data && <CompositionMeter data={data} our={d.ourSide} preview={projected} />}
+          {data && <CompositionMeter data={data} our={d.ourSide} preview={projected} select={select} />}
         </div>
         <aside>
           {data ? (
             <RecommendationPanel
               data={data}
+              preference={preference}
+              setPreference={setPreference}
               turn={turnKey}
               pending={pending}
               select={select}
