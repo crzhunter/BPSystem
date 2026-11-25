@@ -1,0 +1,271 @@
+@media (min-width: 1500px) {
+  .roster-cover {
+    min-height: 92px;
+  }
+  .slot {
+    min-height: 43px;
+  }
+  .hero-banner {
+    min-height: 170px;
+  }
+  .banner-content {
+    padding: 28px 32px;
+  }
+}
+@media (max-width: 1160px) {
+  .sidebar {
+    width: 186px;
+  }
+  .workspace {
+    margin-left: 186px;
+  }
+  .brand {
+    padding: 0 16px;
+  }
+  .tactics {
+    gap: 9px 13px;
+  }
+  .tactics h2 {
+    display: none;
+  }
+  .pos-name small {
+    display: none;
+  }
+  .toast {
+    left: calc(50% + 93px);
+  }
+}
+@media (min-width: 768px) and (max-width: 940px) {
+  .sidebar {
+    width: 160px;
+  }
+  .workspace {
+    margin-left: 160px;
+  }
+  .brand {
+    padding: 0 12px;
+    gap: 6px;
+  }
+  .brand img {
+    width: 31px;
+  }
+  .brand b {
+    font-size: 21px;
+  }
+  .sidebar nav {
+    padding: 0 7px;
+  }
+  .sidebar nav a {
+    padding: 0 10px;
+  }
+  .rosters,
+  .draft-grid {
+    gap: 10px;
+  }
+  .roster-body {
+    padding: 9px 10px 4px;
+  }
+  .toggle-group {
+    gap: 5px;
+  }
+  .segmented button {
+    padding: 4px 6px;
+  }
+  .tactics {
+    padding: 10px;
+  }
+  .swap {
+    font-size: 11px;
+  }
+  .slot {
+    gap: 6px;
+  }
+  .player-select {
+    width: 48%;
+  }
+}
+@media (max-width: 767px) {
+  .sidebar,
+  .crumb,
+  .long {
+    display: none;
+  }
+  .workspace {
+    margin-left: 0;
+  }
+  .topbar {
+    height: 49px;
+    padding: 0 15px;
+  }
+  .mobile-brand {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 20px;
+  }
+  .mobile-brand img {
+    width: 27px;
+    height: 27px;
+  }
+  .workspace main {
+    padding: 13px 12px calc(80px + env(safe-area-inset-bottom));
+  }
+  .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    background: #181d19;
+    border-top: 1px solid #374037;
+    padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+  }
+  .bottom-nav a {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 46px;
+    border-radius: 4px;
+    color: #9ba79d;
+    font-size: 10px;
+  }
+  .short {
+    display: block;
+  }
+  .hero-banner {
+    min-height: 126px;
+    background-position: 59% 50%;
+  }
+  .banner-content {
+    padding: 16px;
+  }
+  .hero-banner h1 {
+    font-size: 31px;
+  }
+  .hero-banner p {
+    font-size: 11px;
+    max-width: 82%;
+  }
+  .patch {
+    right: 9px;
+    top: 11px;
+    font-size: 10px;
+  }
+  .tactics {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 12px;
+    margin-top: 10px;
+  }
+  .toggle-group > span {
+    width: 45px;
+  }
+  .segmented button {
+    min-width: 73px;
+  }
+  .swap {
+    position: absolute;
+    right: 9px;
+    bottom: 12px;
+    font-size: 10px;
+    min-height: 28px;
+    padding: 3px 6px;
+    gap: 3px;
+  }
+  .section-heading {
+    margin: 15px 0 8px;
+  }
+  .section-heading h2,
+  h2 {
+    font-size: 16px;
+  }
+  .section-heading > span {
+    font-size: 10px;
+  }
+  .rosters,
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .roster-cover {
+    min-height: 68px;
+    padding: 10px 14px;
+  }
+  .roster-body {
+    padding: 10px 12px 4px;
+  }
+  .pos-name small {
+    display: inline;
+  }
+  .slot {
+    min-height: 39px;
+  }
+  .player-select {
+    width: 47%;
+    height: 30px;
+  }
+  .board {
+    padding: 13px;
+    margin-top: 12px;
+  }
+  .draft-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .hero-results {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .hero-tile b {
+    font-size: 10px;
+  }
+  .page-intro {
+    margin: 3px 0 14px;
+  }
+  .page-intro h1 {
+    font-size: 26px;
+  }
+  .form-panel {
+    padding: 15px;
+  }
+  .form-grid {
+    gap: 11px;
+  }
+  .toast {
+    bottom: 72px;
+    left: 50%;
+    width: max-content;
+  }
+  .team-slots {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .filters select {
+    max-width: 100px;
+  }
+  .board-note {
+    font-size: 11px;
+  }
+}
+@media (max-width: 365px) {
+  .swap {
+    position: static;
+    margin-left: 0;
+    justify-self: start;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *:before,
+  *:after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
