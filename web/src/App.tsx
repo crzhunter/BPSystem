@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Radio,
   Database,
+  MapPinned,
   Check,
   CircleAlert,
   X,
@@ -16,6 +17,7 @@ import {
 import { api, failure, type Player, type Team, type Hero } from './api';
 import { Draft } from './Draft';
 import { Matches } from './Matches';
+import { Replays } from './Replays';
 import { Players, Teams } from './Library';
 import { SettingsView } from './Settings';
 const pages = [
@@ -23,10 +25,15 @@ const pages = [
   { id: 'teams', name: '战队管理', short: '战队', icon: Shield },
   { id: 'players', name: '选手库', short: '选手', icon: UsersRound },
   { id: 'matches', name: '比赛库 / 导入', short: '比赛库', icon: Trophy },
+  { id: 'replays', name: '录像分析', short: '录像分析', icon: MapPinned },
   { id: 'settings', name: '系统设置', short: '设置', icon: SlidersHorizontal },
 ];
 function pageFromHash() {
-  return pages.find((p) => '#' + p.id === location.hash) ?? pages[0];
+  const [tab, query] = location.hash.split('?');
+  return {
+    ...(pages.find((p) => '#' + p.id === tab) ?? pages[0]),
+    params: new URLSearchParams(query),
+  };
 }
 export function App() {
   const [page, setPage] = useState(pageFromHash);
@@ -81,7 +88,7 @@ export function App() {
       return () => clearTimeout(timer);
     }
   }, [notice]);
-  const links = pages.map((p) => (
+  const navLink = (p: (typeof pages)[number]) => (
     <a
       key={p.id}
       href={'#' + p.id}
@@ -92,7 +99,7 @@ export function App() {
       <span className="long">{p.name}</span>
       <span className="short">{p.short}</span>
     </a>
-  ));
+  );
   return (
     <div className="app">
       <aside className="sidebar">
@@ -106,7 +113,7 @@ export function App() {
           </div>
         </a>
         <div className="nav-caption">赛事工作台</div>
-        <nav aria-label="主导航">{links}</nav>
+        <nav aria-label="主导航">{pages.map(navLink)}</nav>
         <div className="side-foot">
           <Database size={17} />
           <div>
@@ -126,6 +133,14 @@ export function App() {
             <img src="/icon.svg" alt="" />
             BPSystem
           </div>
+          <a
+            className="mobile-settings"
+            href="#settings"
+            aria-label="系统设置"
+            aria-current={page.id === 'settings' ? 'page' : undefined}
+          >
+            <SlidersHorizontal size={18} />
+          </a>
           <button
             className={'connection ' + (online ? 'on' : '')}
             onClick={load}
@@ -140,6 +155,14 @@ export function App() {
             <Draft players={players} teams={teams} heroes={heroes} notify={notify} ready={online === true} />
           ) : page.id === 'matches' ? (
             <Matches heroes={heroes} refresh={refresh} notify={notify} />
+          ) : page.id === 'replays' ? (
+            <Replays
+              key={page.params.toString()}
+              initialParams={page.params}
+              teams={teams}
+              players={players}
+              heroes={heroes}
+            />
           ) : page.id === 'players' ? (
             <Players players={players} refresh={refresh} notify={notify} />
           ) : page.id === 'teams' ? (
@@ -150,7 +173,7 @@ export function App() {
         </main>
       </div>
       <nav className="bottom-nav" aria-label="移动导航">
-        {links}
+        {pages.filter((p) => p.id !== 'settings').map(navLink)}
       </nav>
       {notice && (
         <div

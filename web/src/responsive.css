@@ -269,3 +269,8 @@
     transition: none !important;
   }
 }
+.mobile-settings { display: none; }
+@media (max-width: 767px) {
+  .mobile-settings { display: grid; place-items: center; margin-left: auto; margin-right: 8px; width: 40px; height: 42px; color: var(--soft); }
+  .mobile-settings[aria-current=page] { color: var(--lime); }
+}

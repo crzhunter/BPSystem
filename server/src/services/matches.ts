@@ -96,8 +96,14 @@ export function matchDetail(db: DatabaseSync, id: string) {
   };
 }
 
-export async function importMatch(db: DatabaseSync, client: OpenDotaClient, id: number, tag?: string) {
-  const m = record(await client.get('/matches/' + id));
+export async function importMatch(
+  db: DatabaseSync,
+  client: OpenDotaClient,
+  id: number,
+  tag?: string,
+  refreshParsed = false,
+) {
+  const m = record(await client.get('/matches/' + id, undefined, refreshParsed));
   upstream(numberField(m.match_id) === id);
   const players = rows(m.players),
     draft = rows(m.picks_bans ?? [])
@@ -120,6 +126,7 @@ export async function importMatch(db: DatabaseSync, client: OpenDotaClient, id: 
   const hasParsed =
     flag === true ||
     flag === 1 ||
+    (typeof m.version === 'number' && m.version > 0) ||
     players.some(
       (p) =>
         (Array.isArray(p.obs_log) && p.obs_log.length > 0) ||
@@ -129,7 +136,19 @@ export async function importMatch(db: DatabaseSync, client: OpenDotaClient, id: 
   const picks = draft.filter((d) => d.pick);
   const first = picks[0]?.side;
   return transaction(db, () => {
-    const old = db.prepare('SELECT tag FROM matches WHERE match_id=?').get(id);
+    const old = db.prepare('SELECT tag,has_parsed FROM matches WHERE match_id=?').get(id);
+    const linkedCount = () => Number(
+      db.prepare('SELECT count(p.id) AS n ' + participantJoin + ' WHERE mp.match_id=?').get(id)?.n,
+    );
+    // 轮询期间删除的比赛不能被回填复活；较早发出的未解析响应也不能覆盖已解析记录。
+    if (refreshParsed && !old) throw new HttpError(404, '比赛已删除');
+    if (!hasParsed && (old?.has_parsed || refreshParsed)) {
+      if (tag !== undefined) db.prepare('UPDATE matches SET tag=? WHERE match_id=?').run(tag, id);
+      return {
+        matchId: id, imported: false, updated: true,
+        hasParsed: !!old?.has_parsed, linkedPlayersCount: linkedCount(),
+      };
+    }
     const teamName = (value: unknown) => (value ? textField(record(value).name) : null);
     db.prepare(
       `INSERT INTO matches(match_id,source,tag,patch,start_time,duration,radiant_win,has_parsed,
@@ -200,15 +219,12 @@ export async function importMatch(db: DatabaseSync, client: OpenDotaClient, id: 
     );
     for (const d of draft)
       action.run(id, d.order, d.pick, d.hero, d.side, first == null ? null : Number(d.side === first));
-    const linked = db
-      .prepare('SELECT count(p.id) AS n ' + participantJoin + ' WHERE mp.match_id=?')
-      .get(id);
     return {
       matchId: id,
       imported: !old,
       updated: !!old,
       hasParsed,
-      linkedPlayersCount: Number(linked?.n),
+      linkedPlayersCount: linkedCount(),
     };
   });
 }

@@ -6,6 +6,8 @@ import { root } from './db/index.ts';
 import { rosterRoutes } from './routes/rosters.ts';
 import { systemRoutes } from './routes/system.ts';
 import { matchRoutes } from './routes/matches.ts';
+import { replayRoutes } from './routes/replays.ts';
+import { OpenDotaReplayAdapter, type ReplayParserAdapter } from './services/replayAdapter.ts';
 import { backupRoutes } from './routes/backup.ts';
 import { bpRoutes } from './routes/bp.ts';
 import { OpenDotaClient } from './services/opendota.ts';
@@ -16,6 +18,7 @@ export function createApp(
   port = 3001,
   client = new OpenDotaClient(db),
   production = process.env.NODE_ENV === 'production',
+  replayAdapter: ReplayParserAdapter = new OpenDotaReplayAdapter(db),
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -30,7 +33,7 @@ export function createApp(
         (!req.body || Array.isArray(req.body) || typeof req.body !== 'object') &&
         !(
           req.body === undefined &&
-          /^\/(?:(?:heroes(?:\/matchups)?|(?:players|teams)\/\d+)\/sync|bp\/sessions\/\d+\/(?:undo|reset))$/.test(
+          /^\/(?:(?:heroes(?:\/matchups)?|(?:players|teams)\/\d+)\/sync|bp\/sessions\/\d+\/(?:undo|reset)|matches\/\d+\/request-parse)$/.test(
             req.path,
           )
         )
@@ -41,6 +44,7 @@ export function createApp(
     systemRoutes(db, client, port),
     rosterRoutes(db, client),
     matchRoutes(db, client),
+    replayRoutes(db, client, replayAdapter),
     bpRoutes(db, client),
     backupRoutes(db),
   );

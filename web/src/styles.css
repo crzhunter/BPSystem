@@ -258,7 +258,7 @@ button.primary:hover:enabled {
   overflow: hidden;
   border: 1px solid #394138;
   border-radius: 8px;
-  background: #1a211c url('/art/map.jpg') center 49% / cover;
+  background: #1a211c url('/art/draft-cover.jpg') center 49% / cover;
 }
 .hero-banner:before {
   content: '';

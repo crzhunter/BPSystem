@@ -2,6 +2,7 @@
   "id": "/",
   "name": "BPSystem · Dota 2 赛事 BP 助手",
   "short_name": "BP 对局室",
+  "description": "实时赛事禁选、战队备战与录像热力图分析",
   "lang": "zh-CN",
   "start_url": "/",
   "scope": "/",

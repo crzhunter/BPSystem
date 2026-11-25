@@ -211,7 +211,16 @@ export function Draft({
         </div>
         {!ours && (
           <div className="view-scout">
-            {data ? <Scouting data={data.scoutingCard} heroName={heroName} /> : loading}
+            {data ? (
+              <Scouting
+                data={data.scoutingCard}
+                heroName={heroName}
+                teamId={d[teamKey(s)]}
+                slots={d[slotsKey(s)]}
+              />
+            ) : (
+              loading
+            )}
           </div>
         )}
       </div>

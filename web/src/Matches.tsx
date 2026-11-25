@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Trophy, Download, List } from 'lucide-react';
 import { api, failure, type Hero, type Notify } from './api';
 import { PageIntro } from './Library';
+import { ParseReplayButton } from './ParseReplayButton';
 
 type Action = { orderIndex: number; heroId: number; side: 'radiant' | 'dire'; isPick: number };
 type Summary = {
@@ -319,6 +320,11 @@ export function Matches({ heroes, refresh, notify }: Common) {
               </p>
             )}
             <div className="match-tools">
+              {m.hasParsed ? (
+                <a className="subtle-button" href={'#replays?matchId=' + m.matchId}>查看热力图</a>
+              ) : (
+                <ParseReplayButton matchId={m.matchId} label="请求解析录像" onParsed={changed} />
+              )}
               <button
                 className="subtle-button"
                 aria-expanded={open === m.matchId}

@@ -228,13 +228,44 @@ export function Rankings({
     </section>
   );
 }
-export function Scouting({ data, heroName }: { data: Advice['scoutingCard']; heroName: Names }) {
+export function Scouting({
+  data,
+  heroName,
+  teamId,
+  slots,
+}: {
+  data: Advice['scoutingCard'];
+  heroName: Names;
+  teamId: number | null;
+  slots: (number | null)[];
+}) {
+  function heatmapLink(mode: 'wards' | 'farming') {
+    const params = new URLSearchParams({ mode, side: data.sideProfile.currentSide });
+    if (teamId != null) {
+      params.set('teamId', String(teamId));
+    } else {
+      // 槽位按 1–5 号位排列：首位已选对手天然优先核心，眼位则先查两个辅助位。
+      const firstPlayer = slots.find((id) => id != null);
+      const playerId =
+        mode === 'wards' ? slots.slice(3).find((id) => id != null) ?? firstPlayer : firstPlayer;
+      if (playerId != null) params.set('playerId', String(playerId));
+    }
+    return '#replays?' + params;
+  }
   return (
     <section className="panel intel-card">
       <h2>
         <ScanLine />
         对手情报卡
       </h2>
+      <div className="controls-row">
+        <a className="subtle-button" href={heatmapLink('wards')}>
+          对手眼位热图
+        </a>
+        <a className="subtle-button" href={heatmapLink('farming')}>
+          对手核心刷钱
+        </a>
+      </div>
       <h3>当前阵营表现</h3>
       <div className="side-splits">
         {(['radiant', 'dire'] as const).map((s) => (

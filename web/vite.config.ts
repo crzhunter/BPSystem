@@ -12,7 +12,9 @@ export default defineConfig({
         const assets = Object.keys(bundle)
           .filter((name) => /\.(js|css)$/.test(name))
           .map((name) => '/' + name);
-        const art = readdirSync(new URL('./public/art/', import.meta.url)).map((name) => '/art/' + name);
+        const art = readdirSync(new URL('./public/art/', import.meta.url)).map(
+          (name) => '/art/' + name,
+        );
         const shell = [
           '/',
           '/manifest.webmanifest',
@@ -23,7 +25,12 @@ export default defineConfig({
           ...art,
         ];
         const template = readFileSync(new URL('./sw.js', import.meta.url), 'utf8');
-        const version = createHash('sha256').update(shell.join('|')).digest('hex').slice(0, 12);
+        const hash = createHash('sha256').update(template).update(shell.join('|'));
+        // 公共图片没有文件名哈希；原路径更新地图时也要换代离线缓存。
+        for (const file of shell.filter((path) => path !== '/' && !assets.includes(path)))
+          hash.update(readFileSync(new URL('./public' + file, import.meta.url)));
+        hash.update(readFileSync(new URL('./index.html', import.meta.url)));
+        const version = hash.digest('hex').slice(0, 12);
         this.emitFile({
           type: 'asset',
           fileName: 'sw.js',

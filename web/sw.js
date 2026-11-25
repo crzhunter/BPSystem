@@ -4,8 +4,12 @@ const prefix = 'bpsystem-shell-';
 const cacheName = prefix + '__BUILD_ID__';
 const shell = /*__SHELL_FILES__*/ [];
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(shell)));
-  self.skipWaiting();
+  event.waitUntil(
+    caches
+      .open(cacheName)
+      .then((cache) => cache.addAll(shell.map((path) => new Request(path, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 self.addEventListener('activate', (event) => {
   event.waitUntil(
@@ -36,8 +40,12 @@ self.addEventListener('fetch', (event) => {
       if (saved && event.request.mode !== 'navigate') return saved;
       try {
         const response = await fetch(event.request);
-        if (response.ok)
-          await cache.put(event.request.mode === 'navigate' ? '/' : event.request, response.clone());
+        if (response.ok) {
+          const page =
+            event.request.mode === 'navigate' &&
+            response.headers.get('Content-Type')?.includes('text/html');
+          await cache.put(page ? '/' : event.request, response.clone());
+        }
         return response;
       } catch {
         return (

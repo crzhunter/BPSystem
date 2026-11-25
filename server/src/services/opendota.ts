@@ -33,41 +33,73 @@ export class OpenDotaClient {
     this.options = options;
   }
 
-  private async reserve(keyed: boolean) {
+  private async reserve(keyed: boolean, cost: number) {
     const limit = keyed ? (this.options.keyedLimit ?? 120) : (this.options.freeLimit ?? 50);
+    const slots = Math.min(cost, limit);
     const window = this.options.windowMs ?? 60000;
     for (;;) {
       const now = Date.now();
       this.timestamps = this.timestamps.filter((t) => t > now - window);
-      if (this.timestamps.length < limit) {
-        this.timestamps.push(now);
+      if (this.timestamps.length + slots <= limit) {
+        for (let i = 0; i < slots; i++) this.timestamps.push(now);
         return;
       }
       await delay(Math.max(1, this.timestamps[0] + window - now));
     }
   }
 
-  async get(path: string, ttlMs = this.options.ttlMs ?? 3600000): Promise<unknown> {
-    const cached = this.db
-      .prepare('SELECT payload_json FROM api_cache WHERE cache_key=? AND expires_at>?')
-      .get(path, new Date().toISOString());
+  async get(path: string, ttlMs = this.options.ttlMs ?? 3600000, fresh = false): Promise<unknown> {
+    const cached =
+      !fresh &&
+      ttlMs > 0 &&
+      this.db
+        .prepare('SELECT payload_json FROM api_cache WHERE cache_key=? AND expires_at>?')
+        .get(path, new Date().toISOString());
     if (cached) return JSON.parse(String(cached.payload_json));
-    const active = this.pending.get(path);
+    return this.sharedRequest(path, 'GET', ttlMs, fresh);
+  }
+  private sharedRequest(path: string, method: 'GET' | 'POST', ttlMs: number, fresh = false) {
+    const key = [method, path, fresh].join(' ');
+    const active = this.pending.get(key);
     if (active) return active;
     // 相同资源合并请求，密钥不进入缓存键或错误日志。
-    const request = this.request(path, ttlMs).finally(() => this.pending.delete(path));
-    this.pending.set(path, request);
+    const request = this.request(path, method, ttlMs).finally(() => this.pending.delete(key));
+    this.pending.set(key, request);
     return request;
   }
-  private async request(path: string, ttlMs: number) {
+  async requestParse(matchId: number) {
+    const result = record(await this.sharedRequest('/request/' + matchId, 'POST', 0));
+    const jobId = (result.job ? record(result.job) : result).jobId;
+    upstream(
+      typeof jobId === 'number'
+        ? Number.isSafeInteger(jobId) && jobId > 0
+        : typeof jobId === 'string' && /^[\w-]{1,128}$/.test(jobId),
+    );
+    return jobId as string | number;
+  }
+  async parseStatus(jobId: string, matchId: number) {
+    const value = await this.get('/request/' + jobId, 0);
+    if (value === null) return 'completed';
+    const job = record(value);
+    const linked = job.data && record(job.data).match_id;
+    if (linked != null && Number(linked) !== matchId) throw new HttpError(400, '解析任务与比赛不匹配');
+    const state = job.state ?? job.status;
+    if (state === 'failed' || job.failedReason) return 'failed';
+    return state === 'completed' || job.completed === true ? 'completed' : 'pending';
+  }
+  private async request(path: string, method: 'GET' | 'POST', ttlMs: number) {
     const url = new URL('https://api.opendota.com/api' + path);
     const key = apiKey(this.db);
     if (key) url.searchParams.set('api_key', key);
     for (let attempt = 0; attempt < 3; attempt++) {
-      await this.reserve(!!key);
+      // OpenDota 将一次提交解析按十次调用计入频率额度。
+      await this.reserve(!!key, method === 'POST' ? 10 : 1);
       let response: Response;
       try {
-        response = await (this.options.fetch ?? fetch)(url, { signal: AbortSignal.timeout(15000) });
+        response = await (this.options.fetch ?? fetch)(url, {
+          method,
+          signal: AbortSignal.timeout(15000),
+        });
       } catch {
         throw new HttpError(502, '连接 OpenDota 超时或网络不可用');
       }
@@ -81,16 +113,23 @@ export class OpenDotaClient {
         if (path === '/heroStats' && !validHeroes(payload))
           throw new HttpError(502, 'OpenDota 英雄资料格式异常');
         const now = new Date();
-        this.db
-          .prepare('INSERT OR REPLACE INTO api_cache VALUES (?,?,?,?)')
-          .run(path, JSON.stringify(payload), new Date(+now + ttlMs).toISOString(), now.toISOString());
+        if (ttlMs > 0)
+          this.db
+            .prepare('INSERT OR REPLACE INTO api_cache VALUES (?,?,?,?)')
+            .run(
+              path,
+              JSON.stringify(payload),
+              new Date(+now + ttlMs).toISOString(),
+              now.toISOString(),
+            );
         return payload;
       }
       await response.body?.cancel();
       if (response.status === 403)
         throw new HttpError(502, 'OpenDota 拒绝访问，请检查接口密钥或稍后重试');
       if (response.status === 404) throw new OpenDotaNotFound();
-      if (attempt === 2 || (response.status !== 429 && response.status < 500)) break;
+      if (attempt === 2 || (response.status !== 429 && (response.status < 500 || method === 'POST')))
+        break;
       const retry = response.headers.get('Retry-After');
       const wait =
         retry && /^\d+$/.test(retry)
