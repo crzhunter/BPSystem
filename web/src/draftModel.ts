@@ -1,6 +1,7 @@
 import {
   cmOrder,
   currentStep,
+  currentOrder,
   opposite,
   sideNames,
   type Side,
@@ -16,7 +17,8 @@ export const teamKey = (s: Side) => (s === 'radiant' ? 'radiantTeamId' : 'direTe
 export const blank = (): Room => ({
   title: '未命名对局',
   notes: '',
-  patch: '7.3x',
+  patch: '7.42',
+  cmOrderVersion: currentOrder,
   ourSide: 'radiant',
   firstPickSide: 'radiant',
   radiantTeamId: null,
@@ -52,6 +54,7 @@ export function roomFrom(data: Room): Room {
     direTeamId,
     radiantPlayerIds,
     direPlayerIds,
+    cmOrderVersion: data.cmOrderVersion ?? (data.actions.length ? 'classic' : currentOrder),
     actions: data.actions.map(({ heroId, assignedPlayerId, roleHint }) => ({
       heroId,
       assignedPlayerId,
@@ -71,7 +74,10 @@ export function initialRoom(): Room {
       d.actions.length <= 24 &&
       d.actions.every((a: Action) => Number.isInteger(a.heroId))
     )
-      return roomFrom(d);
+      return roomFrom({
+        ...d,
+        patch: !d.patch || /^\d+\.\dx$/.test(d.patch) ? blank().patch : d.patch,
+      });
     const old = JSON.parse(localStorage.getItem('bp-prep-v1') ?? 'null');
     if (
       old &&
@@ -96,28 +102,4 @@ export function stepLabel(step: ReturnType<typeof currentStep>) {
   return step.isCompleted
     ? '禁选完成'
     : (step.isOurTurn ? '我方' : '敌方') + actionLabel(step.actionType);
-}
-const local = [
-  'antimage',
-  'phantom_assassin',
-  'morphling',
-  'earthshaker',
-  'nevermore',
-  'invoker',
-  'medusa',
-  'tiny',
-  'mars',
-  'puck',
-  'pangolier',
-  'rubick',
-  'crystal_maiden',
-  'lion',
-];
-export function heroArt(name: string) {
-  const slug = name.replace('npc_dota_hero_', '');
-  return local.includes(slug)
-    ? '/art/' + slug + '.png'
-    : 'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/' +
-        encodeURIComponent(slug) +
-        '.png';
 }

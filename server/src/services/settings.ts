@@ -8,6 +8,7 @@ export function apiKey(db: DatabaseSync) {
 export function readSettings(db: DatabaseSync) {
   const key = apiKey(db);
   return {
+    patch: setting(db, 'constants_patch') ?? '7.42',
     hasOpenDotaApiKey: !!key,
     maskedPreview: key ? '••••' + (key.length > 4 ? key.slice(-4) : '') : '',
     tournamentMatchWeight: Number(setting(db, 'tournament_match_weight') ?? 4),

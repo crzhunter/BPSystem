@@ -1,12 +1,16 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { heroPortraitUrl } from '../data/catalog.ts';
 import { heroTags } from '../data/heroTags.ts';
-import type { ReplayParserAdapter } from './replayAdapter.ts';
+import { HttpError } from '../utils/input.ts';
+import { readWardEvents, type ReplayParserAdapter } from './replayAdapter.ts';
 
 type Side = 'radiant' | 'dire';
 export type ReplayFilters = {
   matchId?: number;
   teamId?: number;
   playerId?: number;
+  accountId?: number;
+  playerSlot?: number;
   heroId?: number;
   tag?: string;
   side: Side | 'all';
@@ -38,6 +42,81 @@ type WardPoint = Point &
     wardType: 'obs' | 'sen';
   };
 
+export function replayPlayers(db: DatabaseSync) {
+  return db
+    .prepare(
+      `SELECT p.id,p.nickname,p.roles_json rolesJson,
+    COUNT(DISTINCT m.match_id) parsedMatchCount FROM players p
+    LEFT JOIN match_players mp ON mp.account_id=p.account_id
+    LEFT JOIN matches m ON m.match_id=mp.match_id AND m.source='tournament' AND m.has_parsed=1
+    GROUP BY p.id ORDER BY parsedMatchCount DESC,p.nickname COLLATE NOCASE,p.id`,
+    )
+    .all()
+    .map((p) => ({
+      id: Number(p.id),
+      nickname: String(p.nickname),
+      roles: JSON.parse(String(p.rolesJson)) as number[],
+      parsedMatchCount: Number(p.parsedMatchCount),
+    }));
+}
+
+const participantName =
+  "COALESCE(NULLIF(p.nickname,''),NULLIF(mp.personaname,''),CAST(mp.account_id AS TEXT),'匿名选手')";
+const heroName = "COALESCE(NULLIF(h.cn_name,''),'英雄 ' || mp.hero_id)";
+// 两个入口共用同一份参赛记录。只在比赛内使用槽位辨认匿名选手，避免合并不同人的样本。
+function matchRows(db: DatabaseSync, column: 'p.id' | 'm.match_id', id: number) {
+  const rows = db
+    .prepare(
+      `SELECT m.match_id matchId,m.tag,m.start_time startTime,m.duration,m.has_parsed hasParsed,
+    mp.side,(m.radiant_win=mp.is_radiant) win,mp.hero_id heroId,${heroName} heroCnName,
+    h.localized_name heroLocalizedName,h.name internalName,mp.kills,mp.deaths,mp.assists,mp.gpm,mp.xpm,
+    mp.obs_log_json obs,mp.sen_log_json sen,
+    mp.player_slot playerSlot,p.id playerId,mp.account_id accountId,${participantName} playerName
+    FROM matches m JOIN match_players mp ON mp.match_id=m.match_id
+    LEFT JOIN players p ON p.account_id=mp.account_id LEFT JOIN heroes h ON h.id=mp.hero_id
+    WHERE m.source='tournament' AND ${column}=?
+    ORDER BY m.start_time DESC,m.match_id DESC,mp.player_slot`,
+    )
+    .iterate(id);
+  return Array.from(rows, (r) => ({
+    matchId: Number(r.matchId),
+    tag: String(r.tag),
+    startTime: r.startTime as number | null,
+    duration: r.duration as number | null,
+    hasParsed: !!r.hasParsed,
+    side: r.side as Side,
+    win: !!r.win,
+    resultKnown: r.win !== null,
+    heroId: Number(r.heroId),
+    heroCnName: String(r.heroCnName),
+    heroLocalizedName: String(r.heroLocalizedName ?? r.heroCnName),
+    heroPortraitUrl: r.internalName
+      ? heroPortraitUrl(String(r.internalName))
+      : 'https://cdn.cloudflare.steamstatic.com/steam/apps/570/capsule_sm_120.jpg',
+    kills: r.kills as number | null,
+    deaths: r.deaths as number | null,
+    assists: r.assists as number | null,
+    gpm: r.gpm as number | null,
+    xpm: r.xpm as number | null,
+    obsCount: readWardEvents(String(r.obs)).length,
+    senCount: readWardEvents(String(r.sen)).length,
+    playerSlot: Number(r.playerSlot),
+    playerId: r.playerId as number | null,
+    accountId: r.accountId as number | null,
+    playerName: String(r.playerName),
+  }));
+}
+export function replayPlayerMatches(db: DatabaseSync, playerId: number) {
+  if (!db.prepare('SELECT 1 FROM players WHERE id=?').get(playerId))
+    throw new HttpError(404, '选手不存在');
+  return matchRows(db, 'p.id', playerId);
+}
+export function replayMatchParticipants(db: DatabaseSync, matchId: number) {
+  if (!db.prepare("SELECT 1 FROM matches WHERE match_id=? AND source='tournament'").get(matchId))
+    throw new HttpError(404, '比赛不存在');
+  return matchRows(db, 'm.match_id', matchId);
+}
+
 export function normalizeCoordinates(x: number, y: number): Point {
   const clamp = (value: number) => Math.max(0, Math.min(1, value));
   return { nx: clamp((x - 64) / 128), ny: clamp(1 - (y - 64) / 128) };
@@ -49,6 +128,8 @@ function participants(db: DatabaseSync, f: ReplayFilters) {
     ['m.match_id', f.matchId],
     ['m.tag', f.tag],
     ['p.id', f.playerId],
+    ['mp.account_id', f.accountId],
+    ['mp.player_slot', f.playerSlot],
     ['mp.hero_id', f.heroId],
     ['mp.side', f.side === 'all' ? undefined : f.side],
   ] as const) {
@@ -65,8 +146,7 @@ function participants(db: DatabaseSync, f: ReplayFilters) {
   const rows = db
     .prepare(
       `SELECT m.match_id matchId,m.tag,m.has_parsed hasParsed,mp.player_slot slot,
-      mp.side,mp.hero_id heroId,COALESCE(NULLIF(h.cn_name,''),'英雄 ' || mp.hero_id) heroName,
-      COALESCE(NULLIF(p.nickname,''),NULLIF(mp.personaname,''),CAST(mp.account_id AS TEXT),'匿名选手') playerName,
+      mp.side,mp.hero_id heroId,${heroName} heroName,${participantName} playerName,
       mp.account_id accountId,h.roles_json roles,mp.gpm,mp.xpm,mp.lane_role laneRole
     FROM matches m LEFT JOIN match_players mp ON mp.match_id=m.match_id
     LEFT JOIN players p ON p.account_id=mp.account_id LEFT JOIN heroes h ON h.id=mp.hero_id
@@ -87,11 +167,31 @@ function participants(db: DatabaseSync, f: ReplayFilters) {
   }
   return matches;
 }
-const zones = ['上路/优势路', '中路', '下路', '天辉野区', '夜魇野区', '河道与肉山周边'] as const;
-// 以地图坐标近似划分互斥区域；中路优先，河道沿左上到右下的对角线。
+const zones = ['上路', '中路', '下路', '天辉野区', '夜魇野区', '河道与肉山周边'] as const;
+// 以本地 512px 底图的河心、肉山坑及上下边缘水道为参照。区域是复盘分区，边缘水道归属对应野区。
+const river = [
+  [0.07, 0.33],
+  [0.3, 0.32],
+  [0.5, 0.49],
+  [0.66, 0.64],
+  [0.87, 0.65],
+];
+function nearRiver(x: number, y: number) {
+  for (let i = 1; i < river.length; i++) {
+    const [a, b] = river[i - 1],
+      [c, d] = river[i],
+      dx = c - a,
+      dy = d - b;
+    const t = Math.max(0, Math.min(1, ((x - a) * dx + (y - b) * dy) / (dx * dx + dy * dy)));
+    if (Math.hypot(x - a - t * dx, y - b - t * dy) < 0.065) return true;
+  }
+  return false;
+}
 function zone({ nx: x, ny: y }: Point) {
   if (Math.abs(x + y - 1) <= 0.085) return 1;
-  if (Math.abs(x - y) <= 0.09) return 5;
+  if (nearRiver(x, y)) return 5;
+  if (y < 0.105 && x > 0.28 && x < 0.72) return 4;
+  if (y > 0.89 && x > 0.29 && x < 0.72) return 3;
   if (x < 0.16 || y < 0.16) return 0;
   if (x > 0.84 || y > 0.84) return 2;
   return y > x ? 3 : 4;
@@ -102,7 +202,11 @@ function inPhase(time: number, phase: ReplayFilters['phase']) {
   if (phase === 'late') return time >= 1500;
   return true;
 }
-export async function wardHeatmap(db: DatabaseSync, adapter: ReplayParserAdapter, f: ReplayFilters) {
+export async function wardHeatmap(
+  db: DatabaseSync,
+  adapter: ReplayParserAdapter,
+  f: ReplayFilters,
+) {
   const matches = participants(db, f);
   const points: WardPoint[] = [],
     unparsedMatches: { matchId: number; tag: string }[] = [];
@@ -166,7 +270,11 @@ export async function wardHeatmap(db: DatabaseSync, adapter: ReplayParserAdapter
   return { summary, points, hotspots, unparsedMatches };
 }
 
-export async function farmingHeatmap(db: DatabaseSync, adapter: ReplayParserAdapter, f: ReplayFilters) {
+export async function farmingHeatmap(
+  db: DatabaseSync,
+  adapter: ReplayParserAdapter,
+  f: ReplayFilters,
+) {
   const grid = new Map<string, Point & { rawX: number; rawY: number; weight: number }>();
   const weights = zones.map(() => 0);
   let totalWeight = 0,
@@ -183,7 +291,9 @@ export async function farmingHeatmap(db: DatabaseSync, adapter: ReplayParserAdap
       (p) =>
         f.roleScope === 'all' ||
         (p.laneRole == null
-          ? heroTags(p.heroId, JSON.parse(p.roles ?? '[]')).typicalRoles.some((r) => r >= 1 && r <= 3)
+          ? heroTags(p.heroId, JSON.parse(p.roles ?? '[]')).typicalRoles.some(
+              (r) => r >= 1 && r <= 3,
+            )
           : p.laneRole >= 1 && p.laneRole <= 3),
     );
     const bySlot = new Map(selected.map((p) => [p.slot, p]));
@@ -203,7 +313,12 @@ export async function farmingHeatmap(db: DatabaseSync, adapter: ReplayParserAdap
       }
       for (const { x, y, weight } of track.positions) {
         const key = x + ',' + y;
-        const cell = grid.get(key) ?? { ...normalizeCoordinates(x, y), rawX: x, rawY: y, weight: 0 };
+        const cell = grid.get(key) ?? {
+          ...normalizeCoordinates(x, y),
+          rawX: x,
+          rawY: y,
+          weight: 0,
+        };
         cell.weight += weight;
         totalWeight += weight;
         weights[zone(cell)] += weight;

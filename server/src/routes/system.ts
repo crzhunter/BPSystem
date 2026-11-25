@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { heroTags } from '../data/heroTags.ts';
+import { listHeroes, listItems } from '../data/catalog.ts';
 import { hostname, networkInterfaces } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
@@ -11,7 +11,8 @@ export function lanUrls(interfaces: ReturnType<typeof networkInterfaces>, port: 
   const addresses = Object.entries(interfaces).flatMap(([name, entries]) =>
     (entries ?? [])
       .filter(
-        (ip) => !ip.internal && ip.family === 'IPv4' && !/^(169\.254|198\.1[89])\./.test(ip.address),
+        (ip) =>
+          !ip.internal && ip.family === 'IPv4' && !/^(169\.254|198\.1[89])\./.test(ip.address),
       )
       .map((ip) => {
         const address = ip.address;
@@ -70,33 +71,16 @@ export function systemRoutes(db: DatabaseSync, client: OpenDotaClient, port: num
     const q = String(req.query.q ?? '')
       .trim()
       .toLowerCase();
-    const rows = db
-      .prepare(
-        'SELECT id,name,localized_name,cn_name,aliases_json,img,icon,primary_attr,attack_type,roles_json FROM heroes ORDER BY id',
-      )
-      .all();
     res.json(
-      rows
-        .map((h) => ({
-          id: h.id,
-          name: h.name,
-          localizedName: h.localized_name,
-          cnName: h.cn_name,
-          aliases: JSON.parse(String(h.aliases_json)),
-          img: h.img,
-          icon: h.icon,
-          primaryAttr: h.primary_attr,
-          attackType: h.attack_type,
-          roles: JSON.parse(String(h.roles_json)),
-          ...heroTags(Number(h.id), JSON.parse(String(h.roles_json))),
-        }))
-        .filter((h) =>
-          [h.name, h.localizedName, h.cnName, ...h.aliases].some((s) =>
-            String(s).toLowerCase().includes(q),
-          ),
+      listHeroes(db).filter((h) =>
+        [h.name, h.localizedName, h.cnName, ...h.aliases].some((s) =>
+          String(s).toLowerCase().includes(q),
         ),
+      ),
     );
   });
+  r.get('/items', (_req, res) => res.json(listItems(db)));
+  r.post('/constants/sync', async (_req, res) => res.json(await client.syncConstants()));
   r.post('/heroes/sync', async (_req, res) => res.json(await client.syncHeroes()));
   return r;
 }

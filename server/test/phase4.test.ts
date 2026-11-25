@@ -4,7 +4,14 @@ import { once } from 'node:events';
 import { openDb } from '../src/db/index.ts';
 import { createApp } from '../src/app.ts';
 import { OpenDotaClient } from '../src/services/opendota.ts';
-import { normalizeCoordinates, wardHeatmap, farmingHeatmap } from '../src/services/replay.ts';
+import {
+  normalizeCoordinates,
+  wardHeatmap,
+  farmingHeatmap,
+  replayMatchParticipants,
+  replayPlayerMatches,
+  replayPlayers,
+} from '../src/services/replay.ts';
 import type { ReplayParserAdapter } from '../src/services/replayAdapter.ts';
 
 type Wards = Awaited<ReturnType<typeof wardHeatmap>>;
@@ -79,7 +86,12 @@ async function fixture(
     await new Promise<void>((r) => server.close(() => r()));
     db.close();
   });
-  async function request<T>(path: string, method = 'GET', body?: unknown, status = 200): Promise<T> {
+  async function request<T>(
+    path: string,
+    method = 'GET',
+    body?: unknown,
+    status = 200,
+  ): Promise<T> {
     const res = await fetch(base + path, {
       method,
       headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
@@ -118,6 +130,145 @@ test('地图网格方向、中心点与边界钳制', () => {
   assert.deepEqual(normalizeCoordinates(192, 192), { nx: 1, ny: 0 });
   assert.deepEqual(normalizeCoordinates(128, 128), { nx: 0.5, ny: 0.5 });
   assert.deepEqual(normalizeCoordinates(18, 249), { nx: 0, ny: 0 });
+});
+test('选手参赛摘要按开赛时间与编号排序，返回当场英雄、阵营、胜负和可定位眼数', async (t) => {
+  const { db, request } = await seeded(t);
+  await request('/players', 'POST', { accountId: 333, nickname: '新人', roles: [4, 5] }, 201);
+  await request('/matches/import', 'POST', { matchIds: [104] });
+  db.exec(`UPDATE matches SET source='pub' WHERE match_id=104;
+    UPDATE matches SET start_time=CASE WHEN match_id=101 THEN 3000 ELSE 1000 END;
+    UPDATE match_players SET kills=0,deaths=3,assists=12,hero_id=2 WHERE account_id=110 AND match_id=102`);
+  const list = await request<ReturnType<typeof replayPlayers>>('/replays/players');
+  assert.deepEqual(list.map((p) => [p.id, p.parsedMatchCount]).sort(), [
+    [1, 2],
+    [2, 2],
+    [3, 0],
+  ]);
+  assert.deepEqual(list.find((p) => p.id === 3)?.roles, [4, 5]);
+  const path = '/replays/players/1/matches';
+  const matches = await request<ReturnType<typeof replayPlayerMatches>>(path);
+  assert.deepEqual(
+    matches.map((m) => m.matchId),
+    [101, 103, 102],
+  );
+  assert.deepEqual(
+    matches.map((m) => [
+      m.heroId,
+      m.heroCnName,
+      m.side,
+      m.win,
+      m.hasParsed,
+      m.obsCount,
+      m.senCount,
+    ]),
+    [
+      [1, '敌法师', 'radiant', true, true, 4, 1],
+      [1, '敌法师', 'radiant', true, false, 0, 0],
+      [2, '斧王', 'dire', false, true, 4, 1],
+    ],
+  );
+  assert.deepEqual(matches[2], {
+    matchId: 102,
+    tag: '秋季',
+    startTime: 1000,
+    duration: 1950,
+    hasParsed: true,
+    playerSlot: 128,
+    playerId: 1,
+    playerName: '主力',
+    accountId: 110,
+    side: 'dire',
+    win: false,
+    resultKnown: true,
+    heroId: 2,
+    heroCnName: '斧王',
+    heroLocalizedName: 'Axe',
+    heroPortraitUrl:
+      'https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/axe.png',
+    kills: 0,
+    deaths: 3,
+    assists: 12,
+    gpm: 700,
+    xpm: 0,
+    obsCount: 4,
+    senCount: 1,
+  });
+  assert.deepEqual(await request('/replays/players/3/matches'), []);
+  await request('/replays/players/999/matches', 'GET', undefined, 404);
+  await request('/replays/matches/104/participants', 'GET', undefined, 404);
+  // 老备份可能缺失赛果，界面要能区分「未知」和「负」。
+  db.exec('UPDATE matches SET radiant_win=NULL WHERE match_id=102');
+  assert.equal(replayPlayerMatches(db, 1)[2].resultKnown, false);
+});
+test('同一选手的两场聚合、单场下钻和单场账号或匿名槽位都只使用本人的轨迹', async (t) => {
+  const { db, request } = await seeded(t);
+  const wards = (q: string) => request<Wards>('/replays/wards?' + q);
+  const farm = (q: string) => request<Farming>('/replays/farming?' + q);
+  // 替补两场都有辅助位采样，默认个人查询应包含两场。
+  const total = await wards('playerId=2');
+  assert.deepEqual(
+    total.points.map((p) => [p.matchId, p.accountId, p.side]),
+    [
+      [102, 220, 'dire'],
+      [101, 220, 'radiant'],
+    ],
+  );
+  assert.equal(total.summary.parsedMatchCount, 2);
+  assert.equal(total.summary.obsCount, 2);
+  const one = await wards('playerId=2&matchId=101');
+  assert.deepEqual(
+    one.points,
+    total.points.filter((p) => p.matchId === 101),
+  );
+  assert.equal((await wards('playerId=2&matchId=101&side=dire')).points.length, 0);
+  assert.equal((await wards('playerId=2&matchId=103')).points.length, 0);
+  assert.equal((await farm('playerId=2')).summary.totalWeight, 6);
+  const single = await farm('playerId=2&matchId=102');
+  assert.deepEqual(single.summary, {
+    matchCount: 1,
+    samplePlayers: 1,
+    avgGpm: 800,
+    avgXpm: 900,
+    totalWeight: 3,
+  });
+  assert.deepEqual(
+    single.cells.map((c) => [c.rawX, c.rawY, c.weight]),
+    [[120, 110, 3]],
+  );
+  assert.equal((await farm('playerId=2&roleScope=cores')).cells.length, 0);
+  assert.equal((await farm('playerId=2&matchId=103')).cells.length, 0);
+  db.exec('DELETE FROM players WHERE id=2');
+  const group = await request<ReturnType<typeof replayMatchParticipants>>(
+    '/replays/matches/102/participants',
+  );
+  assert.deepEqual(
+    group.map((p) => p.playerSlot),
+    [0, 1, 2, 3, 4, 128, 129, 130, 131, 132],
+  );
+  assert.equal(group.find((p) => p.playerId !== null)?.playerSlot, 128);
+  assert.deepEqual(
+    [group[6].accountId, group[6].playerId, group[6].heroCnName],
+    [220, null, '水晶室女'],
+  );
+  const account = 'accountId=220&matchId=102',
+    anonymous = 'playerSlot=0&matchId=102';
+  assert.deepEqual(await farm(account), single);
+  assert.deepEqual(
+    (await wards(account)).points.map((p) => [p.matchId, p.accountId]),
+    [[102, 220]],
+  );
+  assert.deepEqual(
+    [group[0].accountId, group[0].playerId, group[0].playerName],
+    [null, null, '匿名选手'],
+  );
+  assert.deepEqual(
+    (await wards(anonymous)).points.map((p) => [p.wardType, p.rawX]),
+    [['sen', 94]],
+  );
+  assert.equal((await farm(anonymous)).summary.totalWeight, 4);
+  await request('/replays/wards?playerSlot=0', 'GET', undefined, 400);
+  await request('/replays/farming?accountId=220', 'GET', undefined, 400);
+  await request('/replays/wards?matchId=102&playerSlot=8', 'GET', undefined, 400);
 });
 test('眼位按类型、时间边界、阵营和赛事精确筛选，保留赛前负时间', async (t) => {
   const { request } = await seeded(t);
@@ -298,7 +449,8 @@ test('六个战术区域互斥，按原始网格权重计算百分比', async (t
   const { request, db } = await seeded(t);
   const positions = {
     72: { 120: 1 },
-    128: { 128: 2, 76: 3, 100: 5 },
+    128: { 128: 2, 76: 7, 100: 5 },
+    180: { 100: 3 },
     158: { 145: 4 },
     100: { 156: 6 },
   };
@@ -308,9 +460,11 @@ test('六个战术区域互斥，按原始网格权重计算百分比', async (t
   const data = await request<Farming>('/replays/farming?matchId=101&playerId=1');
   assert.deepEqual(
     data.zoneBreakdown.map((z) => z.weight),
-    [1, 2, 3, 5, 4, 6],
+    [1, 2, 3, 12, 4, 6],
   );
-  data.zoneBreakdown.forEach((z) => assert.ok(Math.abs(z.percentage - (100 * z.weight) / 21) < 1e-9));
+  data.zoneBreakdown.forEach((z) =>
+    assert.ok(Math.abs(z.percentage - (100 * z.weight) / 28) < 1e-9),
+  );
 });
 test('显式完成与失败、出队后无遥测、任务比赛不匹配和无效输入', async (t) => {
   let status: unknown = { status: 'failed' },

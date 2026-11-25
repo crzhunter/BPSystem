@@ -23,6 +23,9 @@ export default defineConfig({
           '/icon-512.png',
           ...assets,
           ...art,
+          ...readdirSync(new URL('./public/portraits/', import.meta.url)).map(
+            (name) => '/portraits/' + name,
+          ),
         ];
         const template = readFileSync(new URL('./sw.js', import.meta.url), 'utf8');
         const hash = createHash('sha256').update(template).update(shell.join('|'));

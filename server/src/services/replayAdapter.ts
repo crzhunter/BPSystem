@@ -24,7 +24,7 @@ function numeric(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
-function wards(json: string): WardEvent[] {
+export function readWardEvents(json: string): WardEvent[] {
   const result: WardEvent[] = [];
   for (const event of JSON.parse(json)) {
     const x = numeric(event?.x),
@@ -64,8 +64,8 @@ export class OpenDotaReplayAdapter implements ReplayParserAdapter {
       .all(matchId, ...slots)
       .map((row) => ({
         playerSlot: Number(row.player_slot),
-        obs: layer === 'wards' ? wards(String(row.obs_log_json)) : [],
-        sen: layer === 'wards' ? wards(String(row.sen_log_json)) : [],
+        obs: layer === 'wards' ? readWardEvents(String(row.obs_log_json)) : [],
+        sen: layer === 'wards' ? readWardEvents(String(row.sen_log_json)) : [],
         positions: layer === 'farming' ? positions(String(row.lane_pos_json)) : [],
       }));
   }

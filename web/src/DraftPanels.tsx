@@ -1,13 +1,11 @@
-import { useState } from 'react';
-import { Flag, Flame, Sprout, Swords, ScanLine, Crosshair, Shield } from 'lucide-react';
-import { type Hero, type Team, type Player, positions } from './api';
+import { Flag, Flame, Sprout, ScanLine } from 'lucide-react';
+import { type Team, type Player, positions } from './api';
 import { SlotIntel } from './Analytics';
 import {
   cmOrder,
   sideNames,
   slotsKey,
   teamKey,
-  heroArt,
   type Room,
   type Side,
   type Advice,
@@ -32,7 +30,7 @@ export function Roster({
   update: (side: Side, team: number | null, slots: (number | null)[]) => void;
 }) {
   const slots = d[slotsKey(side)],
-    order = cmOrder(d.firstPickSide);
+    order = cmOrder(d.firstPickSide, d.cmOrderVersion);
   const Icon = side === 'radiant' ? Sprout : Flame;
   const occupied = [...d.radiantPlayerIds, ...d.direPlayerIds];
   const picks = d.actions.filter(
@@ -125,6 +123,11 @@ export function Roster({
               </select>
             </label>
             {assignedHero(playerId, i + 1)}
+            {playerId && (
+              <a className="subtle-button" href={`#replays?mode=wards&playerId=${playerId}&side=${side}`}>
+                查看选手录像
+              </a>
+            )}
             {playerId && <SlotIntel id={playerId} side={side} revision={revision} />}
           </div>
         ))}
@@ -148,86 +151,6 @@ export function Roster({
     </section>
   );
 }
-export function Audit({ data }: { data: Advice['lineupAudit'] }) {
-  const tags = [
-    ['stun', '硬控'],
-    ['initiate', '先手'],
-    ['push', '拆塔'],
-    ['save', '救人'],
-  ] as const;
-  return (
-    <section className="panel intel-card">
-      <h2>
-        <Shield />
-        我方阵容体检
-      </h2>
-      <div className="coverage">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <span className={data.coveredRoles.includes(n) ? 'on' : ''} key={n}>
-            {n} 号位
-          </span>
-        ))}
-      </div>
-      <p>{tags.map(([t, label]) => label + ' ' + data.tagCounts[t]).join(' · ')}</p>
-      {data.warnings.length ? (
-        <ul>
-          {data.warnings.map((w) => (
-            <li key={w}>{w}</li>
-          ))}
-        </ul>
-      ) : (
-        <p>各位置与关键战术职能已齐备。</p>
-      )}
-    </section>
-  );
-}
-export function Rankings({
-  type,
-  data,
-  heroName,
-  players,
-}: {
-  type: 'ban' | 'pick';
-  data: Advice;
-  heroName: Names;
-  players: Player[];
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const rows = type === 'ban' ? data.banRecommendations : data.pickRecommendations;
-  return (
-    <section className="panel intel-card">
-      <h2>
-        {type === 'ban' ? <Crosshair /> : <Swords />}
-        {type === 'ban' ? '敌方禁人威胁' : '我方选人推荐'}
-      </h2>
-      {(expanded ? rows : rows.slice(0, 3)).map((row, i) => (
-        <div key={row.heroId} className="intel-row">
-          <div>
-            <small>{i + 1}</small>
-            <b>{heroName(row.heroId)}</b>
-            <strong>{row.score.toFixed(1)}</strong>
-          </div>
-          {'suggestedRole' in row && (
-            <p>
-              {row.suggestedRole} 号位
-              {row.suggestedPlayerId
-                ? ' · ' +
-                  (players.find((p) => p.id === row.suggestedPlayerId)?.nickname ?? '待定选手')
-                : ''}
-            </p>
-          )}
-          <p>{row.reasons.join(' · ')}</p>
-        </div>
-      ))}
-      {!rows.length && <p>本局该项禁选已结束。</p>}
-      {rows.length > 3 && (
-        <button className="text-button" onClick={() => setExpanded(!expanded)}>
-          {expanded ? '收起' : '查看全部 ' + rows.length + ' 名'}
-        </button>
-      )}
-    </section>
-  );
-}
 export function Scouting({
   data,
   heroName,
@@ -241,15 +164,12 @@ export function Scouting({
 }) {
   function heatmapLink(mode: 'wards' | 'farming') {
     const params = new URLSearchParams({ mode, side: data.sideProfile.currentSide });
-    if (teamId != null) {
-      params.set('teamId', String(teamId));
-    } else {
-      // 槽位按 1–5 号位排列：首位已选对手天然优先核心，眼位则先查两个辅助位。
-      const firstPlayer = slots.find((id) => id != null);
-      const playerId =
-        mode === 'wards' ? slots.slice(3).find((id) => id != null) ?? firstPlayer : firstPlayer;
-      if (playerId != null) params.set('playerId', String(playerId));
-    }
+    if (teamId != null) params.set('teamId', String(teamId));
+    // 即使有战队预设，也直接定位本场阵容中的辅助或核心。
+    const first = slots.find((id) => id != null);
+    const target = mode === 'wards' ? (slots.slice(3).find((id) => id != null) ?? first) : first;
+    if (target != null) params.set('playerId', String(target));
+    if (mode === 'farming') params.set('roleScope', 'cores');
     return '#replays?' + params;
   }
   return (
@@ -314,15 +234,5 @@ export function Scouting({
       ))}
       {!data.flexPicks.length && <p>暂无多人熟练使用的英雄。</p>}
     </section>
-  );
-}
-export function HeroPortrait({ h }: { h: Hero }) {
-  const [failed, setFailed] = useState(false);
-  return failed ? (
-    <span className="portrait-fallback" aria-hidden="true">
-      {h.cnName.slice(0, 1)}
-    </span>
-  ) : (
-    <img alt="" loading="lazy" src={heroArt(h.name)} onError={() => setFailed(true)} />
   );
 }

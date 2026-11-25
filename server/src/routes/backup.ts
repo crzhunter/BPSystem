@@ -86,7 +86,7 @@ export function backupRoutes(db: DatabaseSync) {
       const counts = transaction(db, () => {
         // 子表先删除、父表先恢复；INSERT 保留主键，外键约束会让整份错误的快照回滚。
         for (const t of [...tables].reverse())
-          db.exec('DELETE FROM ' + t + (t === 'settings' ? settingsWhere : ''));
+          if (t !== 'heroes') db.exec('DELETE FROM ' + t + (t === 'settings' ? settingsWhere : ''));
         const counts: Record<string, number> = {};
         for (const t of tables) {
           const columns = db.prepare('PRAGMA table_info(' + t + ')').all();
@@ -97,7 +97,7 @@ export function backupRoutes(db: DatabaseSync) {
               columns.map((c) => c.name).join(',') +
               ') VALUES (' +
               columns.map(() => '?').join(',') +
-              ')',
+              (t === 'heroes' ? ') ON CONFLICT(id) DO NOTHING' : ')'),
           );
           const rows = snapshot[t] as unknown[];
           for (let row of rows) {
@@ -106,6 +106,14 @@ export function backupRoutes(db: DatabaseSync) {
               row = { ...row, radiant_players_json: empty, dire_players_json: empty, revision: 1 };
             }
             check(object(row) && Object.keys(row).length === columns.length, '备份字段不完整');
+            if (
+              t === 'draft_sessions' &&
+              typeof row.cm_order_version === 'string' &&
+              row.cm_order_version.endsWith('x-standard')
+            ) {
+              row.cm_order_version = 'classic';
+              if (typeof row.patch === 'string' && row.patch.endsWith('x')) row.patch = '历史对局';
+            }
             if (t === 'settings') validateSetting(row);
             if (t === 'players')
               check(

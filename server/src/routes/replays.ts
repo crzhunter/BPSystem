@@ -4,7 +4,14 @@ import { check, HttpError, stringValue } from '../utils/input.ts';
 import { importMatch } from '../services/matches.ts';
 import type { OpenDotaClient } from '../services/opendota.ts';
 import type { ReplayParserAdapter } from '../services/replayAdapter.ts';
-import { farmingHeatmap, wardHeatmap, type ReplayFilters } from '../services/replay.ts';
+import {
+  farmingHeatmap,
+  replayMatchParticipants,
+  replayPlayerMatches,
+  replayPlayers,
+  wardHeatmap,
+  type ReplayFilters,
+} from '../services/replay.ts';
 
 function id(value: unknown) {
   check(
@@ -22,20 +29,42 @@ function choice<T extends string>(value: unknown, options: readonly T[]): T {
   return value as T;
 }
 function filters(q: Record<string, unknown>, farming: boolean): ReplayFilters {
+  if (q.accountId !== undefined || q.playerSlot !== undefined)
+    check(q.matchId !== undefined, '按参赛账号或槽位筛选时须指定比赛');
+  if (q.playerSlot !== undefined)
+    check(
+      typeof q.playerSlot === 'string' && /^(?:[0-4]|12[89]|13[0-2])$/.test(q.playerSlot),
+      '参赛槽位无效',
+    );
+  const individual =
+    q.playerId !== undefined || q.accountId !== undefined || q.playerSlot !== undefined;
   return {
     matchId: q.matchId === undefined ? undefined : id(q.matchId),
     teamId: q.teamId === undefined ? undefined : id(q.teamId),
     playerId: q.playerId === undefined ? undefined : id(q.playerId),
+    accountId: q.accountId === undefined ? undefined : id(q.accountId),
+    playerSlot: q.playerSlot === undefined ? undefined : Number(q.playerSlot),
     heroId: !farming || q.heroId === undefined ? undefined : id(q.heroId),
     tag: q.tag === undefined ? undefined : stringValue(q.tag, '赛事标签', 100),
     side: choice(q.side, ['all', 'radiant', 'dire']),
     wardType: choice(q.wardType, ['both', 'obs', 'sen']),
     phase: choice(q.phase, ['all', 'early', 'mid', 'late']),
-    roleScope: choice(q.roleScope, ['cores', 'all']),
+    roleScope: choice(q.roleScope ?? (individual ? 'all' : 'cores'), ['cores', 'all']),
   };
 }
-export function replayRoutes(db: DatabaseSync, client: OpenDotaClient, adapter: ReplayParserAdapter) {
+export function replayRoutes(
+  db: DatabaseSync,
+  client: OpenDotaClient,
+  adapter: ReplayParserAdapter,
+) {
   const r = Router();
+  r.get('/replays/players', (_req, res) => res.json(replayPlayers(db)));
+  r.get('/replays/players/:playerId/matches', (req, res) =>
+    res.json(replayPlayerMatches(db, id(req.params.playerId))),
+  );
+  r.get('/replays/matches/:matchId/participants', (req, res) =>
+    res.json(replayMatchParticipants(db, id(req.params.matchId))),
+  );
   function state(matchId: number) {
     const row = db
       .prepare(

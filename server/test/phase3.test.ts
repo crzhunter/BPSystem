@@ -84,7 +84,7 @@ function tournament(db: DatabaseSync, id: number, won: Side, rows: [number, numb
   );
 }
 test('CM 每一阶段的动作、双方阵营与独立先选权均符合 24 步顺序', () => {
-  const expected = ['ban:FSSFSSF', 'pick:FS', 'ban:FFS', 'pick:SFFSSF', 'ban:FSSF', 'pick:FS'];
+  const expected = ['ban:FFSSFSS', 'pick:FS', 'ban:FFS', 'pick:SFFSSF', 'ban:FSFS', 'pick:FS'];
   for (const first of ['radiant', 'dire'] as const) {
     const order = cmOrder(first);
     assert.equal(order.length, 24);
@@ -128,7 +128,7 @@ test('存档 CRUD、十槽位、动作归属、并发步号、重复英雄、撤
   const body = {
     title: '决胜局',
     notes: '对手后选',
-    patch: '7.34',
+    patch: '7.42',
     ourSide: 'radiant',
     firstPickSide: 'dire',
     radiantTeamId: team.id,

@@ -77,6 +77,9 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
         req.body.sessionId === undefined
           ? normalizeDraft(db, req.body)
           : readSession(db, id(req.body.sessionId)),
+        req.body.previewHeroId == null
+          ? undefined
+          : integer(req.body.previewHeroId, 1, Number.MAX_SAFE_INTEGER, '预览英雄'),
       ),
     ),
   );

@@ -28,7 +28,7 @@ test('迁移可重入，保留已有数据和版本，启用外键', (t) => {
   db.exec("UPDATE heroes SET cn_name='保留名称' WHERE id=1");
   migrate(db);
   assert.equal(db.prepare('SELECT cn_name FROM heroes WHERE id=1').get()?.cn_name, '保留名称');
-  assert.equal(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()?.n, 3);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()?.n, 4);
 });
 test('我方、先选方可独立设置，禁选顺序与槽位均受约束', (t) => {
   const db = openDb(':memory:');
@@ -37,8 +37,8 @@ test('我方、先选方可独立设置，禁选顺序与槽位均受约束', (t
   const session = db.prepare('SELECT * FROM draft_sessions').get()!;
   assert.equal(session.first_pick_side, 'radiant');
   assert.equal(session.our_side, 'radiant');
-  assert.equal(session.cm_order_version, '7.3x-standard');
-  assert.equal(session.patch, '7.3x');
+  assert.equal(session.cm_order_version, '7.42-standard');
+  assert.equal(session.patch, '7.42');
   db.exec("UPDATE draft_sessions SET our_side='dire',first_pick_side='radiant'");
   for (const col of ['our_side', 'first_pick_side'])
     assert.throws(() => db.exec('UPDATE draft_sessions SET ' + col + "='first'"), /CHECK/);

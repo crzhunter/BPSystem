@@ -2,6 +2,15 @@ import type { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { transaction } from '../db/index.ts';
 import { upsertHeroes, type HeroData } from '../data/heroes.ts';
+import {
+  feeds,
+  parseConstants,
+  sideQuery,
+  sideSamples,
+  matchupQuery,
+  matchupSamples,
+} from './constants.ts';
+import { storeConstants } from '../data/catalog.ts';
 import { apiKey } from './settings.ts';
 import { HttpError } from '../utils/input.ts';
 import {
@@ -82,7 +91,8 @@ export class OpenDotaClient {
     if (value === null) return 'completed';
     const job = record(value);
     const linked = job.data && record(job.data).match_id;
-    if (linked != null && Number(linked) !== matchId) throw new HttpError(400, '解析任务与比赛不匹配');
+    if (linked != null && Number(linked) !== matchId)
+      throw new HttpError(400, '解析任务与比赛不匹配');
     const state = job.state ?? job.status;
     if (state === 'failed' || job.failedReason) return 'failed';
     return state === 'completed' || job.completed === true ? 'completed' : 'pending';
@@ -128,7 +138,10 @@ export class OpenDotaClient {
       if (response.status === 403)
         throw new HttpError(502, 'OpenDota 拒绝访问，请检查接口密钥或稍后重试');
       if (response.status === 404) throw new OpenDotaNotFound();
-      if (attempt === 2 || (response.status !== 429 && (response.status < 500 || method === 'POST')))
+      if (
+        attempt === 2 ||
+        (response.status !== 429 && (response.status < 500 || method === 'POST'))
+      )
         break;
       const retry = response.headers.get('Retry-After');
       const wait =
@@ -203,7 +216,9 @@ export class OpenDotaClient {
           id,
         );
       if (heroes.length) this.db.prepare('DELETE FROM player_pub_heroes WHERE player_id=?').run(id);
-      const heroInsert = this.db.prepare('INSERT INTO player_pub_heroes VALUES(?,?,?,?,?,?,?,?,?,?)');
+      const heroInsert = this.db.prepare(
+        'INSERT INTO player_pub_heroes VALUES(?,?,?,?,?,?,?,?,?,?)',
+      );
       for (const h of heroes) {
         const games = numberField(h.games),
           wins = numberField(h.win);
@@ -252,6 +267,39 @@ export class OpenDotaClient {
         );
       }
     });
+  }
+  async syncConstants() {
+    const entries = await Promise.all(
+      Object.entries(feeds).map(async ([key, url]) => {
+        if (url.startsWith('/')) return [key, await this.get(url, 0, true)];
+        // Valve 请求独立发送，避免把 OpenDota 密钥带到其他域名。
+        try {
+          const response = await (this.options.fetch ?? fetch)(url, {
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!response.ok) throw new Error(String(response.status));
+          return [key, await response.json()];
+        } catch {
+          throw new HttpError(502, '无法读取 Valve 中文资料，请稍后重试');
+        }
+      }),
+    );
+    const data = parseConstants(Object.fromEntries(entries));
+    const [sideData, pairData] = await Promise.all([
+      this.get(sideQuery(data.since), 0, true),
+      this.get(matchupQuery(data.since), 0, true),
+    ]);
+    const samples = sideSamples(sideData),
+      matchups = matchupSamples(pairData);
+    const heroes = data.heroes.map((h) => ({ ...h, sideSample: samples.get(h.id) }));
+    const now = new Date().toISOString();
+    transaction(this.db, () => storeConstants(this.db, { ...data, heroes, matchups }, now));
+    return {
+      patch: data.patch,
+      sampledAt: now,
+      synced: data.heroes.length,
+      itemCount: data.items.length,
+    };
   }
   async syncHeroes() {
     const data = await this.get('/heroStats');

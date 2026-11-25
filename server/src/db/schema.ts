@@ -26,7 +26,7 @@ CREATE TABLE draft_sessions (
  our_side TEXT NOT NULL CHECK(our_side IN ('radiant','dire')) DEFAULT 'radiant',
  first_pick_side TEXT NOT NULL CHECK(first_pick_side IN ('radiant','dire')) DEFAULT 'radiant',
  radiant_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL, dire_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
- patch TEXT NOT NULL DEFAULT '7.3x', cm_order_version TEXT NOT NULL DEFAULT '7.3x-standard',
+ patch TEXT NOT NULL DEFAULT '7.42', cm_order_version TEXT NOT NULL DEFAULT '7.42-standard',
  status TEXT NOT NULL DEFAULT 'prep', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE draft_actions (
@@ -102,5 +102,20 @@ CREATE TRIGGER clear_draft_slot AFTER DELETE ON players BEGIN
     (SELECT fullkey FROM json_each(dire_players_json) WHERE value=OLD.id),NULL), revision=revision+1
     WHERE EXISTS(SELECT 1 FROM json_each(dire_players_json) WHERE value=OLD.id);
 END;
+`,
+  `
+CREATE TABLE patch_matchups (hero_id INTEGER NOT NULL REFERENCES heroes(id),against_hero_id INTEGER NOT NULL REFERENCES heroes(id),
+ games_played INTEGER NOT NULL,wins INTEGER NOT NULL,PRIMARY KEY(hero_id,against_hero_id));
+CREATE INDEX patch_matchups_opponent ON patch_matchups(against_hero_id,hero_id);
+CREATE TABLE hero_meta (hero_id INTEGER PRIMARY KEY REFERENCES heroes(id), payload TEXT NOT NULL CHECK(json_valid(payload)));
+CREATE TABLE items (id INTEGER PRIMARY KEY, key TEXT NOT NULL, cnName TEXT NOT NULL, localizedName TEXT NOT NULL, imgUrl TEXT NOT NULL);
+ALTER TABLE draft_sessions RENAME COLUMN patch TO previous_patch;
+ALTER TABLE draft_sessions RENAME COLUMN cm_order_version TO previous_order;
+ALTER TABLE draft_sessions ADD COLUMN patch TEXT NOT NULL DEFAULT '7.42';
+ALTER TABLE draft_sessions ADD COLUMN cm_order_version TEXT NOT NULL DEFAULT '7.42-standard';
+UPDATE draft_sessions SET patch=previous_patch WHERE previous_patch NOT LIKE '%x';
+UPDATE draft_sessions SET cm_order_version='classic' WHERE EXISTS(SELECT 1 FROM draft_actions WHERE session_id=draft_sessions.id);
+ALTER TABLE draft_sessions DROP COLUMN previous_patch;
+ALTER TABLE draft_sessions DROP COLUMN previous_order;
 `,
 ];

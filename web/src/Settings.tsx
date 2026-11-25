@@ -63,9 +63,13 @@ export function SettingsView({
   async function sync() {
     setBusy('sync');
     try {
-      const r = await api<{ synced: number }>('/heroes/sync', 'POST');
+      const r = await api<{ synced: number; itemCount: number; patch: string }>(
+        '/constants/sync',
+        'POST',
+      );
       await refresh();
-      notify('同步完成，已更新 ' + r.synced + ' 名英雄');
+      setRetry((n) => n + 1);
+      notify(r.patch + ' 已同步 · ' + r.synced + ' 名英雄 / ' + r.itemCount + ' 件物品');
     } catch (e) {
       notify(failure(e), true);
     } finally {
@@ -73,7 +77,12 @@ export function SettingsView({
     }
   }
   async function restore(file: File) {
-    if (!confirm('用这份备份替换当前选手、战队、比赛、对局存档、英雄对位和分析设置？本机接口密钥会保留。')) return;
+    if (
+      !confirm(
+        '用这份备份替换当前选手、战队、比赛、对局存档、英雄对位和分析设置？本机接口密钥会保留。',
+      )
+    )
+      return;
     setBusy('restore');
     try {
       let snapshot: unknown;
@@ -205,16 +214,18 @@ export function SettingsView({
         <section className="form-panel panel">
           <h2>
             <Database />
-            英雄资料
+            版本数据
           </h2>
           <p className="metric">
             {heroCount}
             <small>名英雄</small>
           </p>
-          <p className="hint">更新 OpenDota 英雄资料，保留中文名与常用简称。</p>
+          <p className="hint">读取 Valve 中文资料与 OpenDota 高分局、职业赛样本。</p>
           <button className="subtle-button" disabled={!!busy} onClick={sync}>
             <RefreshCw size={15} className={busy === 'sync' ? 'spin' : ''} />
-            {busy === 'sync' ? '正在同步…' : '同步英雄库'}
+            {busy === 'sync'
+              ? '正在同步…'
+              : '同步最新 ' + (settings?.patch ?? '7.42') + ' 英雄 / 物品 / 版本常量'}
           </button>
         </section>
         <section className="form-panel panel">
@@ -242,7 +253,7 @@ export function SettingsView({
             数据备份与恢复
           </h2>
           <p className="hint">
-            备份包含选手、阵容、比赛、对局存档、英雄资料、对位数据和分析设置。恢复将替换本机对应数据，接口密钥保留在当前服务器。
+            备份包含选手、阵容、比赛、存档、历史英雄对位和分析设置。恢复后沿用本机当前版本的常量与接口密钥。
           </p>
           <div className="match-tools">
             <a className="subtle-button" href="/api/backup/export" download>

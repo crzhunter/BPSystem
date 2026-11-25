@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Trophy, Download, List } from 'lucide-react';
 import { api, failure, type Hero, type Notify } from './api';
 import { PageIntro } from './Library';
+import { atlasColumns, atlasRows, iconIndex } from './itemAtlas';
 import { ParseReplayButton } from './ParseReplayButton';
 
 type Action = { orderIndex: number; heroId: number; side: 'radiant' | 'dire'; isPick: number };
@@ -19,6 +20,7 @@ type Summary = {
   picksBans: Action[];
 };
 type Participant = {
+  items: ({ cnName: string; imgUrl: string | null } | null)[];
   player_slot: number;
   hero_id: number;
   side: Action['side'];
@@ -35,7 +37,10 @@ type Participant = {
   tower_damage: number | null;
   last_hits: number | null;
 };
-type Detail = Summary & { players: Participant[]; telemetry: { obsCount: number; senCount: number } };
+type Detail = Summary & {
+  players: Participant[];
+  telemetry: { obsCount: number; senCount: number };
+};
 type Result = {
   matchId: number | string;
   updated?: boolean;
@@ -121,10 +126,12 @@ function MatchDetail({
               .map((p) => (
                 <div className="score-entry" key={p.player_slot}>
                   <strong>
-                    {name(p.hero_id)} · {p.linkedNickname || p.personaname || p.account_id || '匿名选手'}
+                    {name(p.hero_id)} ·{' '}
+                    {p.linkedNickname || p.personaname || p.account_id || '匿名选手'}
                   </strong>
                   <span>
-                    击杀 / 死亡 / 助攻　{[p.kills, p.deaths, p.assists].map((n) => n ?? '—').join(' / ')}
+                    击杀 / 死亡 / 助攻　
+                    {[p.kills, p.deaths, p.assists].map((n) => n ?? '—').join(' / ')}
                   </span>
                   <span>
                     每分钟金钱 / 经验　{p.gpm ?? '—'} / {p.xpm ?? '—'}
@@ -133,6 +140,47 @@ function MatchDetail({
                     英雄伤害 {p.hero_damage ?? '—'} · 推塔伤害 {p.tower_damage ?? '—'} · 正补{' '}
                     {p.last_hits ?? '—'}
                   </span>
+                  <div className="score-items" aria-label="物品栏">
+                    {Array.from({ length: 6 }, (_, i) => {
+                      const item = p.items[i];
+                      const icon = item?.imgUrl
+                        ? iconIndex.get(item.imgUrl.split('/').pop()!)
+                        : undefined;
+                      return (
+                        <span
+                          key={i}
+                          title={item?.cnName ?? '空物品栏'}
+                          tabIndex={item ? 0 : undefined}
+                        >
+                          {item && <i aria-hidden="true">{item.cnName.slice(0, 2)}</i>}
+                          {icon !== undefined ? (
+                            <span
+                              className="item-icon"
+                              role="img"
+                              aria-label={item!.cnName}
+                              style={{
+                                backgroundSize: atlasColumns * 100 + '% ' + atlasRows * 100 + '%',
+                                backgroundPosition:
+                                  ((icon % atlasColumns) * 100) / (atlasColumns - 1) +
+                                  '% ' +
+                                  (Math.floor(icon / atlasColumns) * 100) / (atlasRows - 1) +
+                                  '%',
+                              }}
+                            />
+                          ) : item?.imgUrl ? (
+                            <img
+                              src={item.imgUrl}
+                              alt={item.cnName}
+                              onError={(e) => {
+                                e.currentTarget.hidden = true;
+                              }}
+                            />
+                          ) : null}
+                          {item && <small>{item.cnName}</small>}
+                        </span>
+                      );
+                    })}
+                  </div>
                   {p.linkedPlayerId ? (
                     <small>已关联选手库</small>
                   ) : p.account_id ? (
@@ -226,7 +274,10 @@ export function Matches({ heroes, refresh, notify }: Common) {
   }
   return (
     <>
-      <PageIntro title="比赛库 / 导入" description="导入赛事对局，复盘双方阵容、禁选顺序和选手表现。" />
+      <PageIntro
+        title="比赛库 / 导入"
+        description="导入赛事对局，复盘双方阵容、禁选顺序和选手表现。"
+      />
       <form
         className="panel form-panel"
         onSubmit={(e) => {
@@ -281,11 +332,19 @@ export function Matches({ heroes, refresh, notify }: Common) {
         <div className="form-grid">
           <label>
             搜索比赛
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="比赛 ID、队名或选手" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="比赛 ID、队名或选手"
+            />
           </label>
           <label>
             筛选赛事标签
-            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="完整标签" />
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="完整标签"
+            />
           </label>
         </div>
         {error && (
@@ -320,9 +379,10 @@ export function Matches({ heroes, refresh, notify }: Common) {
               </p>
             )}
             <div className="match-tools">
-              {m.hasParsed ? (
-                <a className="subtle-button" href={'#replays?matchId=' + m.matchId}>查看热力图</a>
-              ) : (
+              <a className="subtle-button" href={'#replays?matchId=' + m.matchId}>
+                查看热力图
+              </a>
+              {!m.hasParsed && (
                 <ParseReplayButton matchId={m.matchId} label="请求解析录像" onParsed={changed} />
               )}
               <button

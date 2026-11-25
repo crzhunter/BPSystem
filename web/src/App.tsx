@@ -160,8 +160,6 @@ export function App() {
               key={page.params.toString()}
               initialParams={page.params}
               teams={teams}
-              players={players}
-              heroes={heroes}
             />
           ) : page.id === 'players' ? (
             <Players players={players} refresh={refresh} notify={notify} />

@@ -1,5 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { cmOrder, currentStep, type Side } from '../data/cmOrder.ts';
+import {
+  cmOrder,
+  currentStep,
+  currentOrder,
+  type OrderVersion,
+  type Side,
+} from '../data/cmOrder.ts';
 import { check, HttpError, integer, stringValue } from '../utils/input.ts';
 
 export type Slots = (number | null)[];
@@ -14,6 +20,7 @@ export type Draft = {
   title: string;
   notes: string;
   patch: string;
+  cmOrderVersion: OrderVersion;
   actions: Action[];
 };
 export const slotsFor = (draft: Draft, side: Side) =>
@@ -47,7 +54,14 @@ export function normalizeDraft(db: DatabaseSync, input: Record<string, unknown>)
     ourSide: side(input.ourSide ?? 'radiant'),
     firstPickSide: side(input.firstPickSide ?? 'radiant'),
     title: stringValue(input.title ?? '未命名对局', '对局名称', 120, true),
-    patch: stringValue(input.patch ?? '7.3x', '版本', 32),
+    cmOrderVersion: input.cmOrderVersion === 'classic' ? 'classic' : currentOrder,
+    patch: stringValue(
+      input.patch ??
+        db.prepare("SELECT value FROM settings WHERE key='constants_patch'").get()?.value ??
+        '7.42',
+      '版本',
+      32,
+    ),
     notes: stringValue(input.notes ?? '', '备注', 4000),
     radiantTeamId: team(input.radiantTeamId),
     direTeamId: team(input.direTeamId),
@@ -59,7 +73,7 @@ export function normalizeDraft(db: DatabaseSync, input: Record<string, unknown>)
   check(new Set(roster).size === roster.length, '同一选手只能占一个位置');
   const actions = input.actions ?? [];
   check(Array.isArray(actions) && actions.length <= 24, '禁选记录最多 24 步');
-  const order = cmOrder(draft.firstPickSide);
+  const order = cmOrder(draft.firstPickSide, draft.cmOrderVersion);
   const used = new Set<number>(),
     assigned = new Set<number>();
   const roles = { radiant: new Set<number>(), dire: new Set<number>() };
@@ -111,6 +125,7 @@ export function readSession(db: DatabaseSync, sessionId: number) {
   const draft: Draft = {
     title: String(row.title || '未命名对局'),
     notes: String(row.notes),
+    cmOrderVersion: row.cm_order_version === currentOrder ? currentOrder : 'classic',
     patch: String(row.patch),
     ourSide: row.our_side as Side,
     firstPickSide: row.first_pick_side as Side,
@@ -125,7 +140,7 @@ export function readSession(db: DatabaseSync, sessionId: number) {
       )
       .all(sessionId) as unknown as Action[],
   };
-  const order = cmOrder(draft.firstPickSide);
+  const order = cmOrder(draft.firstPickSide, draft.cmOrderVersion);
   const timeline = order.map((s, i) => ({ ...s, action: draft.actions[i] ?? null }));
   return {
     ...draft,
@@ -134,7 +149,12 @@ export function readSession(db: DatabaseSync, sessionId: number) {
     updatedAt: row.updated_at,
     status: row.status,
     timeline,
-    currentStep: currentStep(draft.firstPickSide, draft.ourSide, draft.actions.length),
+    currentStep: currentStep(
+      draft.firstPickSide,
+      draft.ourSide,
+      draft.actions.length,
+      draft.cmOrderVersion,
+    ),
     actions: draft.actions.map((a, i) => ({ ...order[i], ...a })),
   };
 }
@@ -161,17 +181,17 @@ export function writeSession(db: DatabaseSync, draft: Draft, sessionId?: number)
       db
         .prepare(
           `INSERT INTO draft_sessions(title,notes,patch,our_side,first_pick_side,radiant_team_id,
-      dire_team_id,radiant_players_json,dire_players_json,status,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+      dire_team_id,radiant_players_json,dire_players_json,status,updated_at,created_at,cm_order_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
-        .run(...values, now).lastInsertRowid,
+        .run(...values, now, draft.cmOrderVersion).lastInsertRowid,
     );
   } else {
     db.prepare(
       `UPDATE draft_sessions SET title=?,notes=?,patch=?,our_side=?,first_pick_side=?,radiant_team_id=?,
-      dire_team_id=?,radiant_players_json=?,dire_players_json=?,status=?,updated_at=?,revision=revision+1 WHERE id=?`,
-    ).run(...values, sessionId);
+      dire_team_id=?,radiant_players_json=?,dire_players_json=?,status=?,updated_at=?,cm_order_version=?,revision=revision+1 WHERE id=?`,
+    ).run(...values, draft.cmOrderVersion, sessionId);
   }
-  const order = cmOrder(draft.firstPickSide);
+  const order = cmOrder(draft.firstPickSide, draft.cmOrderVersion);
   db.prepare('DELETE FROM draft_actions WHERE session_id=? AND step_index>?').run(
     sessionId,
     draft.actions.length,

@@ -22,11 +22,13 @@ export type Hero = {
   cnName: string;
   localizedName: string;
   aliases: string[];
+  portraitUrl: string;
   img: string;
   primaryAttr: string;
   typicalRoles: number[];
 };
 export type Settings = {
+  patch: string;
   hasOpenDotaApiKey: boolean;
   maskedPreview: string;
   tournamentMatchWeight: number;

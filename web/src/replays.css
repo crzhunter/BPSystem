@@ -212,13 +212,6 @@
   color: var(--soft);
   font-size: 11px;
 }
-.parse-row {
-  display: grid;
-  gap: 5px;
-  padding: 7px 0;
-  border-top: 1px solid var(--line);
-  font-size: 13px;
-}
 .parse-action {
   gap: 5px;
   flex-wrap: wrap;
@@ -243,12 +236,174 @@
 .zone progress::-webkit-progress-value {
   background: #a5d677;
 }
+.replay-picker {
+  margin-top: 14px;
+  padding: 16px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.replay-picker > header,
+.replay-team-bar,
+.replay-players,
+.record-title,
+.replay-search {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.replay-picker > header {
+  justify-content: space-between;
+}
+.replay-picker h2,
+.replay-map-card h2 {
+  min-width: 0;
+}
+.replay-search {
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--soft);
+  border-radius: 4px;
+  padding: 5px 8px;
+}
+.replay-search input {
+  width: 148px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+}
+.replay-team-bar,
+.replay-players,
+.participant-grid,
+.replay-records {
+  margin-top: 12px;
+}
+.replay-team-bar button,
+.replay-choice {
+  min-width: 0;
+  max-width: 100%;
+  background: #202621;
+  border: 1px solid var(--line);
+  color: var(--soft);
+  padding: 6px 10px;
+  border-radius: 4px;
+  text-align: left;
+  font-size: 13px;
+}
+.replay-choice[aria-pressed='true'],
+.replay-team-bar button[aria-pressed='true'] {
+  border-color: #759554;
+  background: #293521;
+  color: #d7f4ba;
+}
+.player-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+}
+.player-choice b,
+.record-title b,
+.participant-choice b {
+  color: #edf1eb;
+  font-size: 14px;
+}
+.player-choice small {
+  grid-row: 2;
+}
+.parsed-count {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  font-size: 11px;
+  background: #303a30;
+  color: #d3dfc9;
+  border-radius: 3px;
+  padding: 2px 5px;
+}
+.participant-grid,
+.replay-records {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.participant-choice,
+.record-choice {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 9px;
+}
+.participant-choice > span:last-child,
+.record-info {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  gap: 2px;
+}
+.replay-face {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  flex: none;
+  width: 52px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--bg);
+  border-radius: 3px;
+}
+.replay-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.replay-side,
+.replay-outcome {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.replay-side.radiant,
+.replay-outcome.win {
+  background: #303e2a;
+  color: #c3e4a8;
+}
+.replay-side.dire,
+.replay-outcome.loss {
+  background: #48332f;
+  color: #f4b5a9;
+}
+.aggregate-choice {
+  font-weight: 650;
+}
+.replay-records {
+  grid-template-columns: repeat(auto-fill, minmax(min(275px, 100%), 1fr));
+  align-items: start;
+  max-height: 250px;
+  overflow-y: auto;
+  padding: 3px;
+}
+.record-choice {
+  font-size: 12px;
+}
+.record-choice .replay-face {
+  width: 62px;
+}
+.replay-record .parse-action {
+  margin-top: 4px;
+}
 @media (max-width: 940px) {
+  .participant-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+  }
   .replay-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 @media (max-width: 500px) {
+  .replay-picker,
   .replay-map-card,
   .replay-card,
   .replay-filters {
@@ -257,6 +412,22 @@
   .replay-tabs button {
     padding: 9px;
     font-size: 13px;
+  }
+  .participant-grid,
+  .replay-players {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .player-choice {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .parsed-count {
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: start;
+  }
+  .participant-choice .replay-face {
+    width: 40px;
   }
   .replay-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));

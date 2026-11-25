@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { listItems } from '../data/catalog.ts';
 import { transaction } from '../db/index.ts';
 import { HttpError, check } from '../utils/input.ts';
 import type { OpenDotaClient } from './opendota.ts';
@@ -76,17 +77,24 @@ export function matchDetail(db: DatabaseSync, id: string) {
     ${participantJoin} WHERE mp.match_id=? ORDER BY mp.player_slot`,
     )
     .all(id);
+  const items = new Map(listItems(db).map((i) => [i.id, i]));
   const picksBans = db
     .prepare(
       `SELECT order_index AS orderIndex,is_pick AS isPick,hero_id AS heroId,
     side,is_first_pick_team AS isFirstPickTeam FROM match_picks_bans WHERE match_id=? ORDER BY order_index`,
     )
     .all(id);
-  const count = (key: string) => players.reduce((sum, p) => sum + JSON.parse(String(p[key])).length, 0);
+  const count = (key: string) =>
+    players.reduce((sum, p) => sum + JSON.parse(String(p[key])).length, 0);
   return {
     ...metadata,
     hasParsed: !!m.hasParsed,
-    players,
+    players: players.map((p) => ({
+      ...p,
+      items: (JSON.parse(String(p.items_json)) as number[]).map((id) =>
+        id ? (items.get(id) ?? { id, cnName: '未收录物品', imgUrl: null }) : null,
+      ),
+    })),
     picksBans,
     telemetry: {
       obsCount: count('obs_log_json'),
@@ -137,16 +145,21 @@ export async function importMatch(
   const first = picks[0]?.side;
   return transaction(db, () => {
     const old = db.prepare('SELECT tag,has_parsed FROM matches WHERE match_id=?').get(id);
-    const linkedCount = () => Number(
-      db.prepare('SELECT count(p.id) AS n ' + participantJoin + ' WHERE mp.match_id=?').get(id)?.n,
-    );
+    const linkedCount = () =>
+      Number(
+        db.prepare('SELECT count(p.id) AS n ' + participantJoin + ' WHERE mp.match_id=?').get(id)
+          ?.n,
+      );
     // 轮询期间删除的比赛不能被回填复活；较早发出的未解析响应也不能覆盖已解析记录。
     if (refreshParsed && !old) throw new HttpError(404, '比赛已删除');
     if (!hasParsed && (old?.has_parsed || refreshParsed)) {
       if (tag !== undefined) db.prepare('UPDATE matches SET tag=? WHERE match_id=?').run(tag, id);
       return {
-        matchId: id, imported: false, updated: true,
-        hasParsed: !!old?.has_parsed, linkedPlayersCount: linkedCount(),
+        matchId: id,
+        imported: false,
+        updated: true,
+        hasParsed: !!old?.has_parsed,
+        linkedPlayersCount: linkedCount(),
       };
     }
     const teamName = (value: unknown) => (value ? textField(record(value).name) : null);
@@ -171,7 +184,8 @@ export async function importMatch(
     );
     db.prepare('DELETE FROM match_players WHERE match_id=?').run(id);
     db.prepare('DELETE FROM match_picks_bans WHERE match_id=?').run(id);
-    const add = db.prepare(`INSERT INTO match_players(match_id,player_slot,side,is_radiant,account_id,
+    const add =
+      db.prepare(`INSERT INTO match_players(match_id,player_slot,side,is_radiant,account_id,
       personaname,hero_id,kills,deaths,assists,gpm,xpm,hero_damage,tower_damage,last_hits,lane,lane_role,
       draft_order,pick_order,items_json,obs_log_json,sen_log_json,lane_pos_json)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
@@ -218,7 +232,14 @@ export async function importMatch(
       'INSERT INTO match_picks_bans(match_id,order_index,is_pick,hero_id,side,is_first_pick_team) VALUES(?,?,?,?,?,?)',
     );
     for (const d of draft)
-      action.run(id, d.order, d.pick, d.hero, d.side, first == null ? null : Number(d.side === first));
+      action.run(
+        id,
+        d.order,
+        d.pick,
+        d.hero,
+        d.side,
+        first == null ? null : Number(d.side === first),
+      );
     return {
       matchId: id,
       imported: !old,

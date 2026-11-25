@@ -1,5 +1,16 @@
-import { useEffect, useState } from 'react';
-import { Archive, ArrowLeftRight, Redo2, RotateCcw, Undo2, Layers3 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Archive,
+  ArrowLeftRight,
+  Redo2,
+  RotateCcw,
+  Undo2,
+  Swords,
+  UsersRound,
+  Check,
+  Target,
+  Crosshair,
+} from 'lucide-react';
 import { api, failure, type Player, type Team, type Hero, type Notify } from './api';
 import {
   cmOrder,
@@ -10,18 +21,19 @@ import {
   sideNames,
   sides,
   opposite,
-  actionLabel,
   stepLabel,
   type Room,
   type Action,
   type Side,
   type Advice,
 } from './draftModel';
-import { Roster, Audit, Rankings, Scouting } from './DraftPanels';
-import { DraftPicker } from './DraftPicker';
+import { Roster, Scouting } from './DraftPanels';
+import { HeroPoolGrid, Portrait } from './HeroPoolGrid';
+import { DraftHud } from './DraftHud';
+import { RecommendationPanel } from './RecommendationPanel';
+import { CompositionMeter } from './CompositionMeter';
 import { DraftArchive } from './DraftArchive';
 
-const tabs = ['BP 进度', '智能推荐', '对手情报', '选择英雄'];
 export function Draft({
   players,
   teams,
@@ -40,8 +52,27 @@ export function Draft({
   const [revision, setRevision] = useState(0),
     [busy, setBusy] = useState(''),
     [archive, setArchive] = useState(false);
-  const [tab, setTab] = useState(0),
-    [toolsOpen, setToolsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false),
+    [pending, setPending] = useState<number | null>(null);
+  const [instant, setInstant] = useState(false),
+    search = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<{ draft: Room; id: number; result: Advice['preview'] }>();
+  const candidate = heroes.find((h) => h.id === pending);
+  useEffect(() => {
+    if (!pending) return;
+    let active = true;
+    api<Advice>('/bp/recommend', 'POST', { ...d, previewHeroId: pending })
+      .then((data) => {
+        if (active) setPreview({ draft: d, id: pending, result: data.preview });
+      })
+      .catch((e) => {
+        if (active) notify(failure(e), true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [d, pending, notify]);
+  const projected = preview?.draft === d && preview.id === pending ? preview.result : null;
   const [analysis, setAnalysis] = useState<{
     draft: Room;
     revision: number;
@@ -49,8 +80,8 @@ export function Draft({
     error?: string;
   }>();
   const data = analysis?.draft === d && analysis.revision === revision ? analysis.data : undefined;
-  const order = cmOrder(d.firstPickSide),
-    step = currentStep(d.firstPickSide, d.ourSide, d.actions.length);
+  const order = cmOrder(d.firstPickSide, d.cmOrderVersion),
+    step = currentStep(d.firstPickSide, d.ourSide, d.actions.length, d.cmOrderVersion);
   const heroName = (id: number) => heroes.find((h) => h.id === id)?.cnName || '英雄 ' + id;
   useEffect(() => {
     try {
@@ -86,6 +117,7 @@ export function Draft({
     let active = true;
     api<Advice>('/bp/recommend', 'POST', d)
       .then((data) => {
+        if (!data.composition || !data.weights) throw new Error('当前端口仍在运行旧版 BP 服务，请重启服务以载入新版推荐。');
         if (active) setAnalysis({ draft: d, revision, data });
       })
       .catch((e) => {
@@ -96,6 +128,7 @@ export function Draft({
     };
   }, [d, revision, ready]);
   function change(next: Room) {
+    setPending(null);
     setRedo([]);
     setD(next);
   }
@@ -104,6 +137,7 @@ export function Draft({
     change({ ...d, actions: [...d.actions, a] });
   }
   function undo() {
+    setPending(null);
     const last = d.actions.at(-1);
     if (last) {
       setRedo([...redo, last]);
@@ -111,6 +145,7 @@ export function Draft({
     }
   }
   function replay() {
+    setPending(null);
     const a = redo.at(-1);
     if (a) {
       setD({ ...d, actions: [...d.actions, a] });
@@ -174,227 +209,298 @@ export function Draft({
       setRevision((n) => n + 1);
     }
   }
-  const loading = (
-    <p className="panel intel-card" role="status">
-      {analysis?.draft === d && analysis.error ? analysis.error : '正在计算本局情报…'}
-    </p>
-  );
-  function column(s: Side) {
-    const ours = s === d.ourSide;
-    return (
-      <div className={'room-column column-' + s} key={s}>
-        <div className="view-progress">
-          <Roster
-            side={s}
-            d={d}
-            players={players}
-            teams={teams}
-            revision={revision}
-            update={roster}
-            heroName={heroName}
-          />
-        </div>
-        <div className="view-advice">
-          {data ? (
-            <>
-              {ours && <Audit data={data.lineupAudit} />}
-              <Rankings
-                type={ours ? 'pick' : 'ban'}
-                data={data}
-                heroName={heroName}
-                players={players}
-              />
-            </>
-          ) : (
-            loading
-          )}
-        </div>
-        {!ours && (
-          <div className="view-scout">
-            {data ? (
-              <Scouting
-                data={data.scoutingCard}
-                heroName={heroName}
-                teamId={d[teamKey(s)]}
-                slots={d[slotsKey(s)]}
-              />
-            ) : (
-              loading
-            )}
-          </div>
-        )}
-      </div>
-    );
+  function lock(id: number) {
+    if (archive || !heroes.some((h) => h.id === id)) return;
+    const suggested =
+      step.isOurTurn && step.actionType === 'pick'
+        ? data?.pickRecommendations.find((r) => r.heroId === id)
+        : null;
+    play({
+      heroId: id,
+      assignedPlayerId: suggested?.suggestedPlayerId ?? null,
+      roleHint: suggested?.suggestedPlayerId ? suggested.suggestedRole : null,
+    });
   }
+  function select(id: number) {
+    if (instant) lock(id);
+    else setPending(id);
+  }
+  useEffect(() => {
+    function keydown(e: KeyboardEvent) {
+      if (e.isComposing || e.repeat) return;
+      if (e.key === 'Escape') {
+        setPending(null);
+        setToolsOpen(false);
+        return;
+      }
+      if (archive) return;
+      const el = e.target as HTMLElement;
+      const typing = el.isContentEditable || ['TEXTAREA', 'INPUT', 'SELECT'].includes(el.tagName);
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) {
+        e.preventDefault();
+        if (e.shiftKey) replay();
+        else undo();
+        return;
+      }
+      if (e.key === '/' && !typing) {
+        e.preventDefault();
+        search.current?.focus();
+      }
+      if (e.key === 'Enter' && pending && (!typing || el === search.current)) {
+        e.preventDefault();
+        lock(pending);
+      }
+    }
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  });
+  useEffect(() => {
+    // 只有尚未进行的本机草稿跟随同步版本。保留历史对局的补丁标记。
+    if (
+      data?.patch &&
+      !d.id &&
+      !d.actions.length &&
+      d.cmOrderVersion !== 'classic' &&
+      d.patch !== data.patch
+    )
+      setD({ ...d, patch: data.patch });
+  }, [data?.patch, d]);
+  const turnKey = [d.actions.length, step.side, d.ourSide, d.firstPickSide].join('/');
+  const enemy = opposite(d.ourSide);
   return (
-    <div className={'live-room mobile-view-' + tab}>
-      <section className="hero-banner">
-        <div className="banner-content">
-          <span className="mode-label">
-            <span className="live-dot" />
-            {step.isCompleted ? '禁选已完成' : '队长模式'}
-          </span>
-          <h1>
-            实时 <em>BP</em> 对局室
-          </h1>
-          <p>{d.id ? d.title + ' · 更新存档后可跨设备载入' : '本机草稿 · 14 次禁用，10 次选取'}</p>
+    <div className="bp-room">
+      <div className="bp-title">
+        <div>
+          <span className="mode-dot" />
+          队长模式 <small>· {d.id ? d.title : '本机草稿'}</small>
+          <h1>实时 BP 对局室</h1>
         </div>
-        <span className="patch">
-          <Layers3 size={13} />
+        <div className={'turn-readout ' + step.side}>
+          <strong>{String(step.step).padStart(2, '0')}</strong>
+          <span>
+            / 24 手
+            <b>
+              {sideNames[step.side]} · {stepLabel(step)}
+            </b>
+          </span>
+        </div>
+      </div>
+      <div className="bp-tools bp-box">
+        <b className="version-badge">
           {d.patch}
-        </span>
-      </section>
-      <div className="mobile-command">
-        <b>
-          第 {step.step}/24 步 · {stepLabel(step)}
+          {d.cmOrderVersion === 'classic' ? ' · 历史顺序' : ''}
         </b>
-        <button onClick={undo} disabled={!d.actions.length}>
-          <Undo2 size={16} />
+        <label>
+          我方阵营
+          <select
+            aria-label="我方阵营"
+            value={d.ourSide}
+            onChange={(e) => change({ ...d, ourSide: e.target.value as Side })}
+          >
+            {sides.map((s) => (
+              <option value={s} key={s}>
+                {sideNames[s]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          先选方
+          <select
+            aria-label="先选方"
+            value={d.firstPickSide}
+            disabled={!!d.actions.length}
+            onChange={(e) => change({ ...d, firstPickSide: e.target.value as Side })}
+          >
+            {sides.map((s) => (
+              <option value={s} key={s}>
+                {sideNames[s]}先选
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          title="交换双方阵营及先选权"
+          onClick={() =>
+            change({
+              ...d,
+              ourSide: opposite(d.ourSide),
+              firstPickSide: opposite(d.firstPickSide),
+              radiantTeamId: d.direTeamId,
+              direTeamId: d.radiantTeamId,
+              radiantPlayerIds: d.direPlayerIds,
+              direPlayerIds: d.radiantPlayerIds,
+            })
+          }
+        >
+          <ArrowLeftRight />
+          换边
+        </button>
+        <button className="fast-toggle" aria-pressed={instant} onClick={() => setInstant(!instant)}>
+          <i />
+          单击直锁
+        </button>
+        <button disabled={!d.actions.length} title="撤销（Ctrl+Z）" onClick={undo}>
+          <Undo2 />
           撤销
         </button>
+        <button disabled={!redo.length} onClick={replay}>
+          <Redo2 />
+          重做
+        </button>
+        <button
+          disabled={!d.actions.length}
+          onClick={() => {
+            if (confirm('清空本局禁选记录？双方阵容会保留。'))
+              change({ ...d, actions: [], cmOrderVersion: '7.42-standard' });
+          }}
+        >
+          <RotateCcw />
+          重置
+        </button>
+        <button aria-expanded={toolsOpen} onClick={() => setToolsOpen(!toolsOpen)}>
+          <UsersRound />
+          战队/选手配置
+        </button>
+        <button onClick={() => setArchive(true)}>
+          <Archive />
+          存档
+        </button>
       </div>
-      <div className="mobile-tabs" aria-label="对局室视图">
-        {tabs.map((t, i) => (
-          <button key={t} aria-pressed={tab === i} onClick={() => setTab(i)}>
-            {t}
-          </button>
-        ))}
-      </div>
-      <button
-        className="mobile-config"
-        aria-expanded={toolsOpen}
-        onClick={() => setToolsOpen(!toolsOpen)}
-      >
-        {toolsOpen ? '收起配置' : '对局配置与存档'}
-        <span>
-          {sideNames[d.ourSide]} · {d.firstPickSide === d.ourSide ? '我方先选' : '敌方先选'}
-        </span>
-      </button>
-      <section aria-label="对局配置" className={'room-tools panel ' + (toolsOpen ? 'open' : '')}>
-        <div className="controls-row">
-          {(['ourSide', 'firstPickSide'] as const).map((key) => (
-            <div className="toggle-group" key={key}>
-              <span>{key === 'ourSide' ? '我方阵营' : '先选方'}</span>
-              <div className="segmented">
-                {sides.map((s) => (
-                  <button
-                    key={s}
-                    aria-pressed={d[key] === s}
-                    disabled={key === 'firstPickSide' && d.actions.length > 0 && d[key] !== s}
-                    title={
-                      key === 'firstPickSide' && d.actions.length
-                        ? '重置进度后可重新指定先选方'
-                        : undefined
-                    }
-                    className={d[key] === s ? 'chosen ' + s : ''}
-                    onClick={() => change({ ...d, [key]: s })}
-                  >
-                    {sideNames[s]}
-                    {key === 'firstPickSide' ? '先选' : ''}
-                  </button>
-                ))}
+      {toolsOpen && (
+        <section className="roster-drawer bp-box">
+          <div className="roster-pair">
+            {sides.map((s) => (
+              <Roster
+                key={s}
+                side={s}
+                d={d}
+                players={players}
+                teams={teams}
+                revision={revision}
+                update={roster}
+                heroName={heroName}
+              />
+            ))}
+          </div>
+          <div className="controls-row">
+            <button disabled={!!busy || !picked.length} onClick={() => sync('对位')}>
+              {busy === '对位' ? '同步中…' : '同步已选英雄对位'}
+            </button>
+            <button disabled={!!busy || !playerIds.length} onClick={() => sync('战绩')}>
+              {busy === '战绩' ? '同步中…' : '同步双方选手战绩'}
+            </button>
+            <button onClick={() => setToolsOpen(false)}>收起配置</button>
+          </div>
+        </section>
+      )}
+      <DraftHud
+        d={d}
+        players={players}
+        heroes={heroes}
+        assign={(i, a) => change({ ...d, actions: d.actions.map((old, j) => (i === j ? a : old)) })}
+      />
+      <div className="bp-bench">
+        <div className="pool-column">
+          <div className="pending-anchor">
+            <section className={'pending-slot ' + (candidate ? 'armed' : '')} aria-label="待确认槽">
+              <div className="pending-face">
+                {candidate ? <Portrait hero={candidate} /> : <Target size={26} />}
               </div>
-            </div>
-          ))}
-          <button
-            className="subtle-button"
-            onClick={() =>
-              change({
-                ...d,
-                ourSide: opposite(d.ourSide),
-                firstPickSide: opposite(d.firstPickSide),
-                radiantTeamId: d.direTeamId,
-                direTeamId: d.radiantTeamId,
-                radiantPlayerIds: d.direPlayerIds,
-                direPlayerIds: d.radiantPlayerIds,
-              })
-            }
-          >
-            <ArrowLeftRight size={15} />
-            交换阵营
-          </button>
-          <button className="archive-button" onClick={() => setArchive(true)}>
-            <Archive size={15} />
-            对局存档
-          </button>
-        </div>
-        <div className="controls-row commands">
-          <button disabled={!d.actions.length} onClick={undo}>
-            <Undo2 />
-            撤销
-          </button>
-          <button disabled={!redo.length} onClick={replay}>
-            <Redo2 />
-            重做
-          </button>
-          <button
-            disabled={!d.actions.length}
-            onClick={() => {
-              if (confirm('清空本局全部禁选动作？阵容设置会保留。')) change({ ...d, actions: [] });
-            }}
-          >
-            <RotateCcw />
-            重置
-          </button>
-          <button disabled={!!busy || !picked.length} onClick={() => void sync('对位')}>
-            {busy === '对位' ? '正在同步对位…' : '同步已选英雄对位'}
-          </button>
-          <button disabled={!!busy || !playerIds.length} onClick={() => void sync('战绩')}>
-            {busy === '战绩' ? '正在同步战绩…' : '同步本场双方数据'}
-          </button>
-        </div>
-      </section>
-      <section className="panel room-timeline view-progress" aria-label="24 步禁选进度">
-        <div className="timeline-head">
-          <h2>禁选进度</h2>
-          <span>已完成 {d.actions.length} / 24 步</span>
-        </div>
-        <div className="phase-strip">
-          {[1, 2, 3].map((phase) => (
-            <div className="phase-group" key={phase}>
-              <b>第{['一', '二', '三'][phase - 1]}阶段</b>
-              <div>
-                {order
-                  .filter((s) => s.phase === phase)
-                  .map((s) => {
-                    const a = d.actions[s.step - 1],
-                      label =
-                        '第 ' +
-                        s.step +
-                        ' 步 · ' +
-                        sideNames[s.side] +
-                        actionLabel(s.actionType) +
-                        (a ? ' · ' + heroName(a.heroId) : '');
-                    return (
-                      <span
-                        key={s.step}
-                        aria-label={label}
-                        aria-current={
-                          !step.isCompleted && s.step === step.step ? 'step' : undefined
-                        }
-                        className={
-                          s.side +
-                          (a ? ' done' : '') +
-                          (s.step === step.step && !step.isCompleted ? ' active' : '')
-                        }
-                        title={label}
-                      >
-                        <b>{s.step}</b>
-                        <small>{s.actionType === 'ban' ? '禁' : '选'}</small>
-                      </span>
-                    );
-                  })}
+              <div className="pending-info">
+                <small>
+                  待确认槽 · {sideNames[step.side]}
+                  {step.actionType === 'ban' ? '禁用' : '选取'}
+                </small>
+                <b>{candidate?.cnName ?? (step.isCompleted ? '本局禁选完成' : '请选择英雄')}</b>
+                {candidate ? (
+                  <span>
+                    {projected
+                      ? (projected.denied ? '若被选入 · ' : '选入后 · ') + projected.text
+                      : '正在计算阵容变化…'}
+                  </span>
+                ) : (
+                  <span>单击预选，双击锁入</span>
+                )}
               </div>
-            </div>
-          ))}
+              <button
+                className="confirm-pick"
+                disabled={!candidate || step.isCompleted}
+                onClick={() => pending && lock(pending)}
+              >
+                <Check size={15} />
+                {step.actionType === 'ban' ? '锁定禁用' : '锁定选择'}
+                <kbd>↵</kbd>
+              </button>
+              {candidate && (
+                <div className="pending-dims" aria-live="polite">
+                  {[
+                    ['disable', '先手'],
+                    ['frontline', '前排'],
+                    ['burst', '爆发'],
+                    ['sustain', '持续'],
+                    ['push', '推进'],
+                    ['teamfight', '团战'],
+                  ].map(([k, n]) => (
+                    <span key={k}>
+                      {n}{' '}
+                      <b>
+                        {projected ? '+' + projected.delta[k as keyof typeof projected.delta] : '…'}
+                      </b>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+          <div className="mobile-bp-links">
+            <button onClick={() => document.getElementById('recommendations')?.scrollIntoView()}>
+              <Crosshair size={14} />
+              查看推荐
+            </button>
+            <button onClick={() => search.current?.focus()}>
+              <Swords size={14} />
+              查找英雄
+            </button>
+            <button onClick={() => document.getElementById('composition')?.scrollIntoView()}>
+              阵容诊断
+            </button>
+          </div>
+          <HeroPoolGrid
+            heroes={heroes}
+            d={d}
+            search={search}
+            pending={pending}
+            select={select}
+            lock={lock}
+          />
+          {data && <CompositionMeter data={data} our={d.ourSide} preview={projected} />}
         </div>
-      </section>
-      <div className="room-columns">
-        {column('radiant')}
-        <div className="view-picker">
-          <DraftPicker d={d} heroes={heroes} players={players} play={play} />
-        </div>
-        {column('dire')}
+        <aside>
+          {data ? (
+            <RecommendationPanel
+              data={data}
+              turn={turnKey}
+              pending={pending}
+              select={select}
+              lock={lock}
+              scouting={
+                d[slotsKey(enemy)].some(Boolean) ? (
+                  <Scouting
+                    data={data.scoutingCard}
+                    heroName={heroName}
+                    teamId={d[teamKey(enemy)]}
+                    slots={d[slotsKey(enemy)]}
+                  />
+                ) : undefined
+              }
+            />
+          ) : (
+            <p role="status" className="bp-box rec-wait">
+              {(analysis?.draft === d && analysis.error) || '正在计算本局推荐…'}
+            </p>
+          )}
+        </aside>
       </div>
       {archive && (
         <DraftArchive
