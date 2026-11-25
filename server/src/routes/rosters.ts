@@ -3,6 +3,8 @@ import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
 import { check, HttpError, integer, stringValue } from '../utils/input.ts';
 import { parseAccountId } from '../utils/accountId.ts';
+import { analytics } from '../services/analytics.ts';
+import type { OpenDotaClient } from '../services/opendota.ts';
 
 type Row = Record<string, SQLOutputValue>;
 function player(row: Row) {
@@ -14,6 +16,8 @@ function player(row: Row) {
     notes: String(row.notes),
     steamName: row.steam_name,
     avatarUrl: row.avatar_url,
+    isProfilePrivate: !!row.is_profile_private,
+    lastSyncedAt: row.last_synced_at,
   };
 }
 function existing(db: DatabaseSync, table: 'players' | 'teams', id: string) {
@@ -91,8 +95,39 @@ function replaceRoster(db: DatabaseSync, teamId: number, members: unknown) {
   for (const m of rows) insert.run(teamId, m.playerId, m.slot, now);
   db.prepare('UPDATE teams SET updated_at=? WHERE id=?').run(now, teamId);
 }
-export function rosterRoutes(db: DatabaseSync) {
+export function rosterRoutes(db: DatabaseSync, client: OpenDotaClient) {
   const r = Router();
+  r.get('/players/:id/analytics', (req, res) => res.json(analytics(db, Number(req.params.id))));
+  r.post('/players/:id/sync', async (req, res) => {
+    const id = Number(req.params.id);
+    await client.syncPlayer(id);
+    res.json({ player: player(existing(db, 'players', req.params.id)), analytics: analytics(db, id) });
+  });
+  r.post('/teams/:id/sync', async (req, res) => {
+    existing(db, 'teams', req.params.id);
+    const members = db
+      .prepare('SELECT player_id FROM team_members WHERE team_id=? ORDER BY slot')
+      .all(req.params.id);
+    const results = [];
+    for (const m of members) {
+      const playerId = Number(m.player_id);
+      try {
+        await client.syncPlayer(playerId);
+        results.push({
+          playerId,
+          success: true,
+          isProfilePrivate: !!existing(db, 'players', String(playerId)).is_profile_private,
+        });
+      } catch (e) {
+        results.push({
+          playerId,
+          success: false,
+          error: e instanceof HttpError ? e.message : '选手同步失败',
+        });
+      }
+    }
+    res.json({ results });
+  });
   r.get('/players', (_req, res) =>
     res.json(db.prepare('SELECT * FROM players ORDER BY id').all().map(player)),
   );
@@ -107,9 +142,19 @@ export function rosterRoutes(db: DatabaseSync) {
   });
   r.put('/players/:id', (req, res) => {
     const old = existing(db, 'players', req.params.id);
-    db.prepare(
-      'UPDATE players SET account_id=?,nickname=?,roles_json=?,notes=?,updated_at=? WHERE id=?',
-    ).run(...playerFields(req.body, old), new Date().toISOString(), old.id);
+    const fields = playerFields(req.body, old);
+    transaction(db, () => {
+      if (fields[0] !== old.account_id) {
+        db.prepare('DELETE FROM player_pub_heroes WHERE player_id=?').run(old.id);
+        db.prepare('DELETE FROM player_pub_matches WHERE player_id=?').run(old.id);
+        db.prepare(
+          'UPDATE players SET steam_name=NULL,avatar_url=NULL,last_synced_at=NULL,is_profile_private=0 WHERE id=?',
+        ).run(old.id);
+      }
+      db.prepare(
+        'UPDATE players SET account_id=?,nickname=?,roles_json=?,notes=?,updated_at=? WHERE id=?',
+      ).run(...fields, new Date().toISOString(), old.id);
+    });
     res.json(player(existing(db, 'players', req.params.id)));
   });
   r.get('/teams', (_req, res) => res.json(teamList(db)));

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Pencil, Plus, Save, Search, Shield, Trash2, UserRound, UsersRound, X } from 'lucide-react';
 import { api, failure, positions, type Notify, type Player, type Team } from './api';
+import { PlayerAnalysis, TeamSync } from './Analytics';
 type Common = { refresh: () => Promise<void>; notify: Notify };
 function useSave({ refresh, notify }: Common) {
   const [busy, setBusy] = useState(false);
@@ -229,6 +230,21 @@ export function Players({ players, ...common }: Common & { players: Player[] }) 
                   </div>
                 </div>
                 {p.notes && <p className="item-note">{p.notes}</p>}
+                <div className="library-tools">
+                  <button
+                    className="subtle-button"
+                    disabled={busy}
+                    onClick={() =>
+                      save(
+                        () => api('/players/' + p.id + '/sync', 'POST'),
+                        '已同步「' + p.nickname + '」的战绩',
+                      )
+                    }
+                  >
+                    同步战绩
+                  </button>
+                  <PlayerAnalysis player={p} />
+                </div>
               </>
             )}
           </div>
@@ -436,6 +452,14 @@ export function Teams({ teams, players, ...common }: Common & { teams: Team[]; p
               {t.roster.map((m) => m.slot + ' 号位 ' + (m.player?.nickname ?? '待定')).join('　')}
             </p>
             {t.notes && <p className="item-note">{t.notes}</p>}
+            <TeamSync
+              id={t.id}
+              players={[...t.roster, ...t.subs].flatMap((m) => (m.player ? [m.player] : []))}
+              {...common}
+            />
+            {[...t.roster, ...t.subs].map(
+              (m) => m.player && <PlayerAnalysis key={m.slot} player={m.player} />,
+            )}
           </div>
         ))}
         {!teams.length && <p className="empty">还没有战队预设，保存后可在对局室导入。</p>}

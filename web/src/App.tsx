@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Swords,
+  Trophy,
   Shield,
   UsersRound,
   SlidersHorizontal,
@@ -14,12 +15,14 @@ import {
 } from 'lucide-react';
 import { api, failure, type Player, type Team, type Hero } from './api';
 import { Draft } from './Draft';
+import { Matches } from './Matches';
 import { Players, Teams } from './Library';
 import { SettingsView } from './Settings';
 const pages = [
   { id: 'draft', name: '实时 BP 对局室', short: '对局室', icon: Swords },
   { id: 'teams', name: '战队管理', short: '战队', icon: Shield },
   { id: 'players', name: '选手库', short: '选手', icon: UsersRound },
+  { id: 'matches', name: '比赛库 / 导入', short: '比赛库', icon: Trophy },
   { id: 'settings', name: '系统设置', short: '设置', icon: SlidersHorizontal },
 ];
 function pageFromHash() {
@@ -135,6 +138,8 @@ export function App() {
         <main>
           {page.id === 'draft' ? (
             <Draft players={players} teams={teams} heroes={heroes} notify={notify} />
+          ) : page.id === 'matches' ? (
+            <Matches heroes={heroes} refresh={refresh} notify={notify} />
           ) : page.id === 'players' ? (
             <Players players={players} refresh={refresh} notify={notify} />
           ) : page.id === 'teams' ? (

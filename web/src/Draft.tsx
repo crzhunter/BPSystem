@@ -16,7 +16,8 @@ import {
   UsersRound,
   Flame,
 } from 'lucide-react';
-import { positions, type Hero, type Player, type Team, type Notify } from './api';
+import { api, failure, positions, type Hero, type Player, type Team, type Notify } from './api';
+import { SlotIntel } from './Analytics';
 type Side = 'radiant' | 'dire';
 const sides: Side[] = ['radiant', 'dire'];
 const names = { radiant: '天辉', dire: '夜魇' };
@@ -57,6 +58,29 @@ export function Draft({
   notify: Notify;
 }) {
   const [p, setP] = useState(initial);
+  const [syncing, setSyncing] = useState(false),
+    [revision, setRevision] = useState(0);
+  const selected = players.filter((pl) => sides.some((s) => p[s].slots.includes(pl.id)));
+  async function syncLineup() {
+    setSyncing(true);
+    const errors: string[] = [];
+    try {
+      for (const pl of selected) {
+        try {
+          await api('/players/' + pl.id + '/sync', 'POST');
+        } catch (e) {
+          errors.push(pl.nickname + '：' + failure(e));
+        }
+      }
+      setRevision((n) => n + 1);
+      notify(
+        errors.length ? errors.join('；') : '已同步本场 ' + selected.length + ' 名选手',
+        !!errors.length,
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }
   useEffect(() => {
     try {
       localStorage.setItem('bp-prep-v1', JSON.stringify(p));
@@ -119,7 +143,7 @@ export function Draft({
                   className={p[key] === s ? 'chosen ' + s : ''}
                   onClick={() => setP({ ...p, [key]: s })}
                 >
-                  {key === 'our' ? (s === 'radiant' ? '天辉 Radiant' : '夜魇 Dire') : names[s] + '先选'}
+                  {key === 'our' ? names[s] : names[s] + '先选'}
                 </button>
               ))}
             </div>
@@ -147,7 +171,9 @@ export function Draft({
           <UsersRound />
           双方阵容
         </h2>
-        <span>首发阵容 · 每方 5 人</span>
+        <button className="subtle-button" disabled={syncing || !selected.length} onClick={syncLineup}>
+          {syncing ? '正在逐人同步…' : '同步本场双方数据'}
+        </button>
       </div>
       <div className="rosters">
         {sides.map((side) => {
@@ -218,6 +244,14 @@ export function Draft({
                         </select>
                         <ChevronDown size={13} />
                       </div>
+                      {selected.some((pl) => pl.id === p[side].slots[i]) && (
+                        <SlotIntel
+                          key={p[side].slots[i]}
+                          id={p[side].slots[i]}
+                          side={side}
+                          revision={revision}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>

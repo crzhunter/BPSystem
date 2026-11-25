@@ -10,7 +10,7 @@ export function readSettings(db: DatabaseSync) {
   return {
     hasOpenDotaApiKey: !!key,
     maskedPreview: key ? '••••' + (key.length > 4 ? key.slice(-4) : '') : '',
-    tournamentMatchWeight: Number(setting(db, 'tournament_match_weight') ?? 2),
-    pubRecentDays: Number(setting(db, 'pub_recent_days') ?? 30),
+    tournamentMatchWeight: Number(setting(db, 'tournament_match_weight') ?? 4),
+    pubRecentDays: Number(setting(db, 'pub_recent_days') ?? 60),
   };
 }

@@ -72,6 +72,38 @@ export function SettingsView({
       setBusy('');
     }
   }
+  async function restore(file: File) {
+    if (!confirm('用这份备份替换当前选手、战队、比赛和分析设置？本机接口密钥会保留。')) return;
+    setBusy('restore');
+    try {
+      let snapshot: unknown;
+      try {
+        snapshot = JSON.parse(await file.text());
+      } catch {
+        throw new Error('无法读取 JSON 备份，请检查文件格式');
+      }
+      const { counts } = await api<{ counts: Record<string, number> }>(
+        '/backup/import',
+        'POST',
+        snapshot,
+      );
+      await refresh();
+      setRetry((n) => n + 1);
+      notify(
+        '恢复完成，共 ' +
+          counts.players +
+          ' 名选手、' +
+          counts.teams +
+          ' 支战队、' +
+          counts.matches +
+          ' 场比赛',
+      );
+    } catch (e) {
+      notify(failure(e), true);
+    } finally {
+      setBusy('');
+    }
+  }
   return (
     <>
       <PageIntro title="系统设置" description="配置赛事分析参数、数据源与手机访问。" />
@@ -151,7 +183,7 @@ export function SettingsView({
                 />
               </label>
               <label>
-                近期天梯范围（天）
+                近期路人范围（天）
                 <input
                   type="number"
                   min="1"
@@ -203,6 +235,33 @@ export function SettingsView({
           })}
           {net && !net.lanUrls.length && <p className="hint">尚未检测到局域网 IPv4 地址。</p>}
           {net && <small className="muted">主机 {net.hostname}</small>}
+        </section>
+        <section className="form-panel panel">
+          <h2>
+            <Database />
+            数据备份与恢复
+          </h2>
+          <p className="hint">
+            备份包含选手、阵容、比赛、英雄资料和分析设置。恢复将替换本机对应数据，接口密钥保留在当前服务器。
+          </p>
+          <div className="match-tools">
+            <a className="subtle-button" href="/api/backup/export" download>
+              导出 JSON 备份
+            </a>
+            <label className="subtle-button backup-picker">
+              {busy === 'restore' ? '正在恢复…' : '导入 JSON 恢复'}
+              <input
+                type="file"
+                accept=".json,application/json"
+                disabled={!!busy}
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  e.currentTarget.value = '';
+                  if (file) void restore(file);
+                }}
+              />
+            </label>
+          </div>
         </section>
       </div>
     </>

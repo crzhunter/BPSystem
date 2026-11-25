@@ -38,7 +38,7 @@ test('健康状态、网络信息、设置脱敏与原子更新', async (t) => {
   const net = await req('/system/network');
   assert.ok(net.hostname);
   assert.ok(Array.isArray(net.lanUrls));
-  assert.equal((await req('/settings')).pubRecentDays, 30);
+  assert.equal((await req('/settings')).pubRecentDays, 60);
   const settings = await req('/settings', 'PUT', {
     opendotaApiKey: 'secret-1234',
     tournamentMatchWeight: 0,

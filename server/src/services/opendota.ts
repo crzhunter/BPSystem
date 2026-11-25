@@ -4,6 +4,16 @@ import { transaction } from '../db/index.ts';
 import { upsertHeroes, type HeroData } from '../data/heroes.ts';
 import { apiKey } from './settings.ts';
 import { HttpError } from '../utils/input.ts';
+import {
+  bit,
+  faction,
+  numberField,
+  optionalNumber,
+  record,
+  rows,
+  textField,
+  upstream,
+} from './odFields.ts';
 
 interface Options {
   fetch?: typeof fetch;
@@ -77,6 +87,9 @@ export class OpenDotaClient {
         return payload;
       }
       await response.body?.cancel();
+      if (response.status === 403)
+        throw new HttpError(502, 'OpenDota 拒绝访问，请检查接口密钥或稍后重试');
+      if (response.status === 404) throw new OpenDotaNotFound();
       if (attempt === 2 || (response.status !== 429 && response.status < 500)) break;
       const retry = response.headers.get('Retry-After');
       const wait =
@@ -88,6 +101,119 @@ export class OpenDotaClient {
     }
     throw new HttpError(502, 'OpenDota 暂时不可用，请稍后重试');
   }
+  async syncPlayer(id: number) {
+    const player = this.db.prepare('SELECT account_id FROM players WHERE id=?').get(id);
+    if (!player) throw new HttpError(404, '选手不存在');
+    const base = '/players/' + player.account_id;
+    const read = async (path: string, hidden: unknown) => {
+      try {
+        return await this.get(base + path);
+      } catch (error) {
+        if (error instanceof OpenDotaNotFound) return hidden;
+        throw error;
+      }
+    };
+    const info = record(await read('', {}));
+    const profile = info.profile == null ? null : record(info.profile);
+    const heroes = rows(await read('/heroes', []));
+    let matches;
+    try {
+      // 默认投影不含经济和分路，随同最近 50 场一起请求。
+      const query = new URLSearchParams({ limit: '50' });
+      for (const field of [
+        'hero_id',
+        'start_time',
+        'kills',
+        'deaths',
+        'assists',
+        'gold_per_min',
+        'xp_per_min',
+        'lane',
+        'lane_role',
+        'party_size',
+        'leagueid',
+      ])
+        query.append('project', field);
+      matches = rows(await this.get(base + '/matches?' + query));
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status === 503) throw error;
+      matches = rows(await read('/recentMatches', []));
+    }
+    const now = new Date().toISOString();
+    const playedHeroes = heroes.filter((h) => numberField(h.games) > 0);
+    const privateProfile =
+      !profile || !Object.keys(profile).length || (!playedHeroes.length && !matches.length);
+    transaction(this.db, () => {
+      // 网络等待期间可能已经换绑账号；旧账号数据不能写入新选手档案。
+      if (
+        this.db.prepare('SELECT account_id FROM players WHERE id=?').get(id)?.account_id !==
+        player.account_id
+      )
+        throw new HttpError(409, '选手账号已变更，请重新同步');
+      this.db
+        .prepare(
+          `UPDATE players SET steam_name=COALESCE(?,steam_name),avatar_url=COALESCE(?,avatar_url),
+        is_profile_private=?,last_synced_at=?,updated_at=? WHERE id=?`,
+        )
+        .run(
+          textField(profile?.personaname),
+          textField(profile?.avatarfull ?? profile?.avatarmedium ?? profile?.avatar),
+          Number(privateProfile),
+          now,
+          now,
+          id,
+        );
+      if (heroes.length) this.db.prepare('DELETE FROM player_pub_heroes WHERE player_id=?').run(id);
+      const heroInsert = this.db.prepare('INSERT INTO player_pub_heroes VALUES(?,?,?,?,?,?,?,?,?,?)');
+      for (const h of heroes) {
+        const games = numberField(h.games),
+          wins = numberField(h.win);
+        upstream(wins <= games);
+        heroInsert.run(
+          id,
+          numberField(h.hero_id, 1),
+          games,
+          wins,
+          optionalNumber(h.last_played),
+          numberField(h.with_games ?? 0),
+          numberField(h.with_win ?? 0),
+          numberField(h.against_games ?? 0),
+          numberField(h.against_win ?? 0),
+          now,
+        );
+      }
+      const matchInsert = this.db.prepare(
+        'INSERT OR REPLACE INTO player_pub_matches VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      );
+      for (const m of matches.slice(0, 50)) {
+        if (Number(m.leagueid) > 0) continue;
+        const f = faction(m.player_slot);
+        matchInsert.run(
+          id,
+          numberField(m.match_id, 1),
+          numberField(m.hero_id, 1),
+          f.slot,
+          f.side,
+          f.radiant,
+          Number(f.radiant === bit(m.radiant_win)),
+          numberField(m.start_time),
+          ...[
+            m.duration,
+            m.kills,
+            m.deaths,
+            m.assists,
+            m.gold_per_min,
+            m.xp_per_min,
+            m.lane,
+            m.lane_role,
+            m.game_mode,
+            m.lobby_type,
+            m.party_size,
+          ].map(optionalNumber),
+        );
+      }
+    });
+  }
   async syncHeroes() {
     const data = await this.get('/heroStats');
     if (!validHeroes(data)) throw new HttpError(502, 'OpenDota 英雄资料格式异常');
@@ -96,6 +222,11 @@ export class OpenDotaClient {
       synced: data.length,
       heroCount: Number(this.db.prepare('SELECT COUNT(*) AS n FROM heroes').get()?.n),
     };
+  }
+}
+class OpenDotaNotFound extends HttpError {
+  constructor() {
+    super(502, 'OpenDota 未找到该记录');
   }
 }
 function validHeroes(data: unknown): data is HeroData[] {

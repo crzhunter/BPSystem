@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { root } from './db/index.ts';
 import { rosterRoutes } from './routes/rosters.ts';
 import { systemRoutes } from './routes/system.ts';
+import { matchRoutes } from './routes/matches.ts';
+import { backupRoutes } from './routes/backup.ts';
 import { OpenDotaClient } from './services/opendota.ts';
 import { HttpError } from './utils/input.ts';
 
@@ -16,6 +18,7 @@ export function createApp(
 ) {
   const app = express();
   app.disable('x-powered-by');
+  app.use('/api/backup/import', express.json({ limit: '64mb' }));
   app.use(express.json({ limit: '128kb' }));
   app.use(
     '/api',
@@ -23,14 +26,16 @@ export function createApp(
       res.set('Cache-Control', 'no-store');
       if (
         ['POST', 'PUT'].includes(req.method) &&
-        req.path !== '/heroes/sync' &&
+        !/^\/(?:heroes|(?:players|teams)\/\d+)\/sync$/.test(req.path) &&
         (!req.body || Array.isArray(req.body) || typeof req.body !== 'object')
       )
         return next(new HttpError(400, '请提交 JSON 对象'));
       next();
     },
     systemRoutes(db, client, port),
-    rosterRoutes(db),
+    rosterRoutes(db, client),
+    matchRoutes(db, client),
+    backupRoutes(db),
   );
   app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
   const dist = resolve(root, 'web/dist');

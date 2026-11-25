@@ -6,6 +6,29 @@ import { check, integer, stringValue } from '../utils/input.ts';
 import { readSettings } from '../services/settings.ts';
 import type { OpenDotaClient } from '../services/opendota.ts';
 
+export function lanUrls(interfaces: ReturnType<typeof networkInterfaces>, port: number) {
+  const addresses = Object.entries(interfaces).flatMap(([name, entries]) =>
+    (entries ?? [])
+      .filter(
+        (ip) => !ip.internal && ip.family === 'IPv4' && !/^(169\.254|198\.1[89])\./.test(ip.address),
+      )
+      .map((ip) => {
+        const address = ip.address;
+        const range = address.startsWith('192.168.')
+          ? 0
+          : address.startsWith('10.')
+            ? 1
+            : /^172\.(1[6-9]|2\d|3[01])\./.test(address)
+              ? 2
+              : 3;
+        const wifi = /wi-?fi|wireless|wlan|无线/i.test(name);
+        return { address, priority: range + (wifi && range < 3 ? -3 : 0) };
+      }),
+  );
+  addresses.sort((a, b) => a.priority - b.priority);
+  return [...new Set(addresses.map((ip) => 'http://' + ip.address + ':' + port))];
+}
+
 export function systemRoutes(db: DatabaseSync, client: OpenDotaClient, port: number) {
   const r = Router();
   r.get('/health', (_req, res) =>
@@ -17,11 +40,7 @@ export function systemRoutes(db: DatabaseSync, client: OpenDotaClient, port: num
     }),
   );
   r.get('/system/network', (_req, res) => {
-    const urls = Object.values(networkInterfaces())
-      .flat()
-      .filter((ip) => ip && !ip.internal && ip.family === 'IPv4')
-      .map((ip) => 'http://' + ip!.address + ':' + port);
-    res.json({ port, lanUrls: [...new Set(urls)], hostname: hostname() });
+    res.json({ port, lanUrls: lanUrls(networkInterfaces(), port), hostname: hostname() });
   });
   r.get('/settings', (_req, res) => res.json(readSettings(db)));
   r.put('/settings', (req, res) => {

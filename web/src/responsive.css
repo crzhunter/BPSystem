@@ -117,7 +117,7 @@
     right: 0;
     z-index: 10;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     background: #181d19;
     border-top: 1px solid #374037;
     padding: 4px 6px calc(4px + env(safe-area-inset-bottom));

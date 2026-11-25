@@ -62,4 +62,31 @@ CREATE TABLE hero_matchups (
  wins INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(hero_id,against_hero_id)
 );
 `,
+  `
+ALTER TABLE match_players ADD COLUMN personaname TEXT;
+ALTER TABLE match_players ADD COLUMN hero_damage INTEGER;
+ALTER TABLE match_players ADD COLUMN tower_damage INTEGER;
+ALTER TABLE match_players ADD COLUMN last_hits INTEGER;
+ALTER TABLE matches ADD COLUMN radiant_name TEXT;
+ALTER TABLE matches ADD COLUMN dire_name TEXT;
+CREATE INDEX match_players_account ON match_players(account_id, match_id);
+CREATE TABLE player_pub_heroes (
+ player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE, hero_id INTEGER NOT NULL,
+ games INTEGER NOT NULL CHECK(games >= 0), wins INTEGER NOT NULL CHECK(wins BETWEEN 0 AND games),
+ last_played INTEGER, with_games INTEGER NOT NULL, with_wins INTEGER NOT NULL,
+ against_games INTEGER NOT NULL, against_wins INTEGER NOT NULL, updated_at TEXT NOT NULL,
+ PRIMARY KEY(player_id, hero_id)
+);
+CREATE TABLE player_pub_matches (
+ player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE, match_id INTEGER NOT NULL,
+ hero_id INTEGER NOT NULL, player_slot INTEGER NOT NULL CHECK(player_slot BETWEEN 0 AND 255),
+ side TEXT NOT NULL CHECK(side IN ('radiant','dire')), is_radiant INTEGER NOT NULL CHECK(is_radiant IN (0,1)),
+ win INTEGER NOT NULL CHECK(win IN (0,1)), start_time INTEGER NOT NULL, duration INTEGER,
+ kills INTEGER, deaths INTEGER, assists INTEGER, gpm INTEGER, xpm INTEGER, lane INTEGER,
+ lane_role INTEGER, game_mode INTEGER, lobby_type INTEGER, party_size INTEGER,
+ PRIMARY KEY(player_id, match_id),
+ CHECK(is_radiant = (player_slot < 128) AND is_radiant = (side = 'radiant'))
+);
+CREATE INDEX pub_player_time ON player_pub_matches(player_id, start_time DESC);
+`,
 ];

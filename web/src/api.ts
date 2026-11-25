@@ -1,4 +1,11 @@
-export type Player = { id: number; accountId: number; nickname: string; roles: number[]; notes: string };
+export type Player = {
+  id: number;
+  accountId: number;
+  nickname: string;
+  roles: number[];
+  notes: string;
+  lastSyncedAt: string | null;
+};
 export type Member = { slot: number; player: Player | null };
 export type Team = {
   id: number;
