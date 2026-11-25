@@ -1,4 +1,4 @@
-# BPSystem REST API · 第一至第六阶段
+# BPSystem REST API · 第一至第七阶段
 
 以下路径相对于同源前缀 `/api`。生产默认地址为 `http://localhost:3001/api`。请求和响应使用 JSON，提交对象时设置 `Content-Type: application/json`。常规请求体上限 128 KiB，备份恢复上限 64 MiB。GET 返回 200，创建选手、战队或存档返回 201，删除成功返回 204 空响应。接口响应带 `Cache-Control: no-store`。
 
@@ -10,13 +10,15 @@
 | --- | --- | --- |
 | GET | `/health` | 返回 `ok, db, heroCount, timestamp`。 |
 | GET | `/system/network` | 返回后端 `port, hostname, lanUrls[]`。开发网页向手机展示同一主机的 Vite 端口。 |
-| GET | `/settings` | 返回 `patch, hasOpenDotaApiKey, maskedPreview, tournamentMatchWeight, pubRecentDays, playerPoolWeight`。 |
+| GET | `/settings` | 返回 `patch, hasOpenDotaApiKey, maskedPreview, tournamentMatchWeight, pubRecentDays, playerPoolWeight, metaBracket`。 |
 | PUT | `/settings` | 部分更新接口密钥、赛事局倍数、近期窗口或英雄池权重。密钥最多 512 字符，空串清除。新库默认 4 倍、60 天、0.18。兼容旧请求的赛事倍数 0–100，生效范围 0–8。窗口取整数 1–365，英雄池权重自动限制在 0.15–0.20。 |
 | GET | `/heroes?q=` | 可按中英文名、内部名、简称搜索。数组项含 `id, name, localizedName, cnName, aliases, img, icon, portraitUrl, meta, primaryAttr, attackType, roles, typicalRoles, tags`。 |
 | GET | `/items` | 按 ID 升序返回物品数组，每项含 `id, key, cnName, localizedName, imgUrl`。英雄及物品的全尺寸图片地址均指向 Steam CDN。 |
 | POST | `/constants/sync` | 无需请求体。原子刷新英雄、物品、版本、7.42 起算边界及后续补丁 ID、职业赛分阵营和对位样本，返回 `{patch,sampledAt,synced,itemCount}`。 |
 | POST | `/heroes/sync` | 无必填字段，更新本地英雄资料，返回 `{synced,heroCount}`。 |
 | POST | `/heroes/matchups/sync` | `{"heroIds":[1,2]}` 同步指定英雄对位。空数组跳过，省略则请求全库。返回 `{requested,synced,results:[{heroId,count,error?}]}`，遇上游错误停止该批次。 |
+
+`PUT /settings` 接受部分更新，例如 `{"metaBracket":"community_pub"}`。新库和没有分段偏好的旧备份默认使用 `immortal_pub`。两种取值分别使用超凡＋冠绝、传奇＋万古＋超凡的天梯记录。非法值返回 400。英雄列表与推荐读取同一设置，别名忽略大小写，重名简称可返回多个英雄。
 
 ## 选手、战队与战绩
 
@@ -122,12 +124,19 @@
 | GET | `/bp/sessions/:id` | 返回草稿字段及 `id,revision,updatedAt,status,timeline,currentStep`。 |
 | PUT | `/bp/sessions/:id` | 部分更新，提供 actions 时完整替换动作，返回完整存档。 |
 | POST | `/bp/sessions/:id/action` | 执行下一步。指定 `stepIndex` 或 `step` 可修正已执行步骤，返回完整存档。 |
+| PUT | `/bp/sessions/:id/action/:stepIndex` | 原位修改已锁定的第 1–24 手，返回更新后的完整存档。提交 `heroId`、`roleHint`、`assignedPlayerId` 中至少一项。省略的字段沿用旧值，分工传 null 表示清除。 |
 | POST | `/bp/sessions/:id/undo` | 撤销最后一步，返回完整存档；空局返回 400。 |
 | POST | `/bp/sessions/:id/reset` | 清空动作并保留对局资料和阵容，返回完整存档。 |
 | DELETE | `/bp/sessions/:id` | 删除存档及动作。 |
 | POST | `/bp/recommend` | 传 `{"sessionId":1}` 或完整／部分草稿，可带整数 `previewHeroId` 和 `rolePreference`。返回 `patch,currentStep,banRecommendations,pickRecommendations,composition,weights,preview,lineupAudit,scoutingCard,effectiveRoleMode,roleModes,bpAdvantage,laneForecast`。推荐仅查询本地数据。 |
 
 英雄的 `primaryAttr` 为 str、agi、int、all。`meta` 包含 tier、baseWinrate、highMmrWinrate、pickRate、proContestedRate、proBanRate、sideBias、counts、sampledAt 和 patch。百分比标度为 0–100，缺少胜率或阵营样本时对应值为 null。
+
+`meta.metaBracket, games, baseWinrate, pickRate, strength, needsSpecialist` 描述当前榜单；`highMmrWinrate` 始终对应 7＋8 档。`counts` 保留 5–8 档各自的 `_pick`、`_win` 以及职业选禁原值。职业选禁在强度中的权重为零。
+
+`POST /bp/recommend` 可带 `metaBracket` 临时指定分段，也适用于 `sessionId` 请求。响应返回实际使用的 `metaBracket` 和数据来源提示 `bracketNote`。推荐项的 `tips` 为简短理由。`metaSummary.games/winrate/pickRate` 对应所选分段，`highMmrPicks` 始终对应 7＋8 档。需专人操刀的英雄只有在对应阵营有空位和本版实战证明时才进入候选；敌方符合条件时 `shortTags` 包含「敌方绝活预警」。
+
+例如，向 `PUT /bp/sessions/3/action/8` 提交 `{"heroId":27,"revision":5}`，只换第八手英雄并保留该手分工和后续动作。重复英雄、还没走到的手号、禁人分配位置、选手冲突返回 400；存档不存在返回 404；提交过期修订号返回 409。失败时整笔撤销。
 
 `composition.our`、`composition.enemy` 含 assignments、coveredRoles、missingRoles、scores、damageProfile、rangeBalance、warnings、strengths。scores 的六个键为 disable、frontline、burst、sustain、push、teamfight。每方每位英雄只占一个位置。预览返回候选、阵营、是否为禁用推演、fillsRole 和六项 delta。当前手结束或候选已使用时 preview 为 null。
 
@@ -154,4 +163,4 @@
 | GET | `/backup/export` | 下载 JSON，含 `version:4`、`exportedAt` 和各业务表数组，文件名为 `BPSystem-YYYY-MM-DD.json`。 |
 | POST | `/backup/import` | 接受版本 2、3、4。旧快照按原始逐场时间识别版本样本。事务内替换业务数据、保留本机密钥、清理请求缓存，返回 `{counts:{表名:行数}}`。错误快照整笔回滚。 |
 
-快照包括 `settings, heroes, players, teams, team_members, matches, match_players, match_picks_bans, player_pub_heroes, player_pub_matches, draft_sessions, draft_actions, hero_matchups`。录像字段随比赛与参赛者一起备份。恢复时保留本机当前版本的英雄常量、物品及模型样本，补入历史备份独有的英雄记录。设置导出赛事倍数、英雄池权重和近期窗口。当前浏览器草稿和查询中的任务编号分别保存在浏览器本地存储和会话存储。
+快照包括 `settings, heroes, players, teams, team_members, matches, match_players, match_picks_bans, player_pub_heroes, player_pub_matches, draft_sessions, draft_actions, hero_matchups`。录像字段随比赛与参赛者一起备份。恢复时保留本机当前版本的英雄常量、物品及模型样本，补入历史备份独有的英雄记录。设置导出赛事倍数、英雄池权重、近期窗口和天梯分段。当前浏览器草稿和查询中的任务编号分别保存在浏览器本地存储和会话存储。

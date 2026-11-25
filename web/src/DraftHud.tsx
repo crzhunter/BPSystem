@@ -17,12 +17,16 @@ export function DraftHud({
   heroes,
   players,
   assign,
+  replace,
+  replacing,
   advice,
 }: {
   d: Room;
   heroes: Hero[];
   players: Player[];
   assign: (i: number, a: Action) => void;
+  replace: (i: number) => void;
+  replacing: number | null;
   advice?: Advice;
 }) {
   const order = cmOrder(d.firstPickSide, d.cmOrderVersion),
@@ -69,11 +73,24 @@ export function DraftHud({
                         className={'pick-slot ' + (!a && t.step === step.step ? 'current' : '')}
                         key={i}
                       >
-                        <div className="pick-face">
+                        <button
+                          className="pick-face"
+                          disabled={!a}
+                          aria-pressed={replacing === i}
+                          aria-label={
+                            '替换第 ' +
+                            t.step +
+                            ' 手 · ' +
+                            sideNames[s] +
+                            '选人 ' +
+                            (h?.cnName ?? '')
+                          }
+                          onClick={() => replace(i)}
+                        >
                           {h ? <Portrait hero={h} /> : <Shield size={23} />}
                           <small>第 {t.step} 手</small>
-                        </div>
-                        <b>{h?.cnName ?? '待选'}</b>
+                          <b>{h?.cnName ?? '待选'}</b>
+                        </button>
                         {a && (
                           <div className="bind-slot">
                             <select
@@ -148,8 +165,19 @@ export function DraftHud({
                           const a = d.actions[t.step - 1],
                             h = byId.get(a?.heroId);
                           return (
-                            <span
+                            <button
                               key={t.step}
+                              disabled={!a}
+                              aria-pressed={replacing === t.step - 1}
+                              aria-label={
+                                '替换第 ' +
+                                t.step +
+                                ' 手 · ' +
+                                sideNames[s] +
+                                '禁用 ' +
+                                (h?.cnName ?? '')
+                              }
+                              onClick={() => replace(t.step - 1)}
                               className={
                                 'ban-slot ' +
                                 (h ? 'filled ' : '') +
@@ -168,7 +196,7 @@ export function DraftHud({
                                   {t.step}
                                 </>
                               )}
-                            </span>
+                            </button>
                           );
                         })}
                     </div>
@@ -179,62 +207,63 @@ export function DraftHud({
           );
         })}
       </div>
-      {advantage && (
+      {advantage ? (
         <section className="bp-balance bp-box" aria-label="BP 胜率预估">
-          <header>
+          <div className="balance-strip">
             <strong>BP 胜率预估</strong>
-            <span>{advantage.summary}</span>
-          </header>
-          <div className="balance-labels">
             <b>天辉 {advantage.radiantWinProb.toFixed(1)}%</b>
+            <div
+              className="balance-track"
+              role="meter"
+              aria-label="天辉预估胜率"
+              aria-valuenow={advantage.radiantWinProb}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <i style={{ width: advantage.radiantWinProb + '%' }} />
+            </div>
             <b>夜魇 {advantage.direWinProb.toFixed(1)}%</b>
+            <span>{advantage.summary}</span>
           </div>
-          <div
-            className="balance-track"
-            role="meter"
-            aria-label="天辉预估胜率"
-            aria-valuenow={advantage.radiantWinProb}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <i style={{ width: advantage.radiantWinProb + '%' }} />
-          </div>
-          <div className="adv-components">
-            <span>天辉分差</span>
-            {(
-              [
-                ['metaEdge', '版本'],
-                ['matchupEdge', '对位'],
-                ['compositionEdge', '阵容'],
-                ['sideEdge', '阵营'],
-              ] as const
-            ).map(([key, label]) => (
-              <span key={key}>
-                {label} {advantage[key] > 0 ? '+' : ''}
-                {advantage[key].toFixed(1)}
-              </span>
-            ))}
-          </div>
-          {!!advice?.laneForecast.length && (
-            <div className="lane-forecast">
-              {advice.laneForecast.map((l) => (
-                <div key={l.label}>
-                  <small>
-                    {l.label} · {l.location}
-                  </small>
-                  <b>{l.verdict}</b>
-                  <span>
-                    {l.ourHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'} 对{' '}
-                    {l.enemyHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'}
-                  </span>
-                  {l.partial && <small>分路待定</small>}
-                </div>
+          <details className="balance-details">
+            <summary>看分路</summary>
+            <div className="adv-components">
+              <span>天辉分差</span>
+              {(
+                [
+                  ['metaEdge', '版本'],
+                  ['matchupEdge', '对位'],
+                  ['compositionEdge', '阵容'],
+                  ['sideEdge', '阵营'],
+                ] as const
+              ).map(([key, label]) => (
+                <span key={key}>
+                  {label} {advantage[key] > 0 ? '+' : ''}
+                  {advantage[key].toFixed(1)}
+                </span>
               ))}
             </div>
-          )}
+            {!!advice?.laneForecast.length && (
+              <div className="lane-forecast">
+                {advice.laneForecast.map((l) => (
+                  <div key={l.label}>
+                    <small>
+                      {l.label} · {l.location}
+                    </small>
+                    <b>{l.verdict}</b>
+                    <span>
+                      {l.ourHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'} 对{' '}
+                      {l.enemyHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'}
+                    </span>
+                    {l.partial && <small>分路待定</small>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </details>
         </section>
-      )}
-      <div className="hud-track bp-box">
+      ) : <div className="bp-balance bp-box"><div className="balance-strip" role="status">正在看双方阵容…</div></div>}
+      <div className="hud-track bp-box" role="group" aria-label={'禁选进度，第 ' + step.phase + ' 阶段，已走 ' + d.actions.length + ' 手'}>
         <div className="track-head">
           <b>禁选进度</b>
           <span>

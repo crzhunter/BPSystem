@@ -21,7 +21,7 @@ import {
   sideNames,
   sides,
   opposite,
-  stepLabel,
+  roomFrom,
   type Room,
   type Action,
   type Side,
@@ -55,9 +55,19 @@ export function Draft({
     [archive, setArchive] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false),
     [pending, setPending] = useState<number | null>(null);
+  const [moreTools, setMoreTools] = useState(false);
   const [instant, setInstant] = useState(false),
     search = useRef<HTMLInputElement>(null);
   const [preference, setPreference] = useState<RolePreference>('auto');
+  const [query, setQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState(0);
+  function clearFilters() {
+    setQuery('');
+    setRoleFilter(0);
+  }
+  const [replacing, setReplacing] = useState<number | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const editInFlight = useRef(false);
   const [preview, setPreview] = useState<{ draft: Room; id: number; result: Advice['preview'] }>();
   const candidate = heroes.find((h) => h.id === pending);
   useEffect(() => {
@@ -119,7 +129,7 @@ export function Draft({
     let active = true;
     api<Advice>('/bp/recommend', 'POST', { ...d, rolePreference: preference })
       .then((data) => {
-        if (!data.roleModes || !data.bpAdvantage) throw new Error('当前端口仍在运行旧版 BP 服务，请重启服务以载入新版推荐。');
+        if (!data.metaBracket) throw new Error('请重启 BP 助手，载入新版天梯榜。');
         if (active) setAnalysis({ draft: d, revision, data });
       })
       .catch((e) => {
@@ -130,6 +140,7 @@ export function Draft({
     };
   }, [d, revision, ready, preference]);
   function change(next: Room) {
+    setReplacing(null);
     setPending(null);
     setRedo([]);
     setD(next);
@@ -137,8 +148,54 @@ export function Draft({
   function play(a: Action) {
     if (step.isCompleted || d.actions.some((old) => old.heroId === a.heroId)) return;
     change({ ...d, actions: [...d.actions, a] });
+    clearFilters();
+  }
+  async function editAction(index: number, action: Action) {
+    if (editInFlight.current) return;
+    if (d.actions.some((a, i) => i !== index && a.heroId === action.heroId)) {
+      notify('这英雄已经锁过了，换一个', true);
+      return;
+    }
+    let next = { ...d, actions: d.actions.map((a, i) => (i === index ? action : a)) };
+    try {
+      if (d.id) {
+        editInFlight.current = true;
+        setSavingEdit(true);
+        const path = '/bp/sessions/' + d.id;
+        const saved = roomFrom(await api<Room>(path));
+        if (saved.revision !== d.revision) throw new Error('存档已被更新，请重新载入或另存本局');
+        // 现场可能已多走几手。存档前缀一致时单改已保存的手，只带回修订号，保留本机后续动作。
+        const prefix = roomFrom({ ...d, actions: d.actions.slice(0, saved.actions.length) });
+        if (index < saved.actions.length && JSON.stringify(saved) === JSON.stringify(prefix)) {
+          const updated = await api<Room>(path + '/action/' + (index + 1), 'PUT', {
+            ...action,
+            revision: d.revision,
+          });
+          next = { ...next, revision: updated.revision };
+        } else notify('已改本机草稿，点「存档」可保存本局进度');
+      }
+      change(next);
+      clearFilters();
+    } catch (e) {
+      notify(failure(e), true);
+    } finally {
+      editInFlight.current = false;
+      setSavingEdit(false);
+    }
+  }
+  async function switchBracket(metaBracket: Advice['metaBracket']) {
+    setBusy('分段');
+    try {
+      await api('/settings', 'PUT', { metaBracket });
+      setRevision((n) => n + 1);
+    } catch (e) {
+      notify(failure(e), true);
+    } finally {
+      setBusy('');
+    }
   }
   function undo() {
+    setReplacing(null);
     setPending(null);
     const last = d.actions.at(-1);
     if (last) {
@@ -147,9 +204,11 @@ export function Draft({
     }
   }
   function replay() {
+    setReplacing(null);
     setPending(null);
     const a = redo.at(-1);
     if (a) {
+      clearFilters();
       setD({ ...d, actions: [...d.actions, a] });
       setRedo(redo.slice(0, -1));
     }
@@ -213,6 +272,10 @@ export function Draft({
   }
   function lock(id: number) {
     if (archive || !heroes.some((h) => h.id === id)) return;
+    if (replacing !== null) {
+      void editAction(replacing, { ...d.actions[replacing], heroId: id });
+      return;
+    }
     const suggested =
       step.isOurTurn && step.actionType === 'pick'
         ? data?.pickRecommendations.find((r) => r.heroId === id)
@@ -220,18 +283,24 @@ export function Draft({
     play({
       heroId: id,
       assignedPlayerId: suggested?.suggestedPlayerId ?? null,
-      roleHint: suggested && (suggested.suggestedPlayerId || (preference !== 'auto' &&
-        data?.composition.our.missingRoles.includes(suggested.suggestedRole))) ? suggested.suggestedRole : null,
+      roleHint:
+        suggested &&
+        (suggested.suggestedPlayerId ||
+          (preference !== 'auto' &&
+            data?.composition.our.missingRoles.includes(suggested.suggestedRole)))
+          ? suggested.suggestedRole
+          : null,
     });
   }
   function select(id: number) {
-    if (instant) lock(id);
+    if (instant || replacing !== null) lock(id);
     else setPending(id);
   }
   useEffect(() => {
     function keydown(e: KeyboardEvent) {
-      if (e.isComposing || e.repeat) return;
+      if (e.isComposing || e.repeat || editInFlight.current) return;
       if (e.key === 'Escape') {
+        setReplacing(null);
         setPending(null);
         setToolsOpen(false);
         return;
@@ -270,29 +339,35 @@ export function Draft({
   }, [data?.patch, d]);
   const turnKey = [d.actions.length, step.side, d.ourSide, d.firstPickSide].join('/');
   const enemy = opposite(d.ourSide);
+  const editStep = replacing === null ? null : order[replacing];
+  const actionText = step.actionType === 'ban' ? '禁用' : '选人';
+  const nextOurStep = order.slice(d.actions.length).find((s) => s.side === d.ourSide);
   return (
-    <div className="bp-room">
-      <div className="bp-title">
-        <div>
-          <span className="mode-dot" />
-          队长模式 <small>· {d.id ? d.title : '本机草稿'}</small>
-          <h1>实时 BP 对局室</h1>
-        </div>
-        <div className={'turn-readout ' + step.side}>
-          <strong>{String(step.step).padStart(2, '0')}</strong>
-          <span>
-            / 24 手
-            <b>
-              {sideNames[step.side]} · {stepLabel(step)}
-            </b>
-          </span>
-        </div>
-      </div>
-      <div className="bp-tools bp-box">
+    <div className="bp-room" inert={savingEdit} aria-busy={savingEdit}>
+      <div className={'bp-tools bp-box' + (moreTools ? ' show-more' : '')}>
         <b className="version-badge">
           {d.patch}
           {d.cmOrderVersion === 'classic' ? ' · 历史顺序' : ''}
         </b>
+        <div className="bracket-choice" role="group" aria-label="分段模式">
+          {(['immortal_pub', 'community_pub'] as const).map((mode) => (
+            <button
+              key={mode}
+              disabled={!!busy || !data}
+              aria-pressed={analysis?.data?.metaBracket === mode}
+              onClick={() => void switchBracket(mode)}
+            >
+              {mode === 'immortal_pub' ? '冠绝/超凡' : '大众社区赛'}
+            </button>
+          ))}
+        </div>
+        <button
+          className="more-tools"
+          aria-expanded={moreTools}
+          onClick={() => setMoreTools(!moreTools)}
+        >
+          {moreTools ? '收起操作' : '更多操作'}
+        </button>
         <label>
           我方阵营
           <select
@@ -323,6 +398,7 @@ export function Draft({
           </select>
         </label>
         <button
+          className="extra-tool"
           title="交换双方阵营及先选权"
           onClick={() =>
             change({
@@ -343,15 +419,21 @@ export function Draft({
           <i />
           单击直锁
         </button>
-        <button disabled={!d.actions.length} title="撤销（Ctrl+Z）" onClick={undo}>
+        <button
+          className="extra-tool"
+          disabled={!d.actions.length}
+          title="撤销（Ctrl+Z）"
+          onClick={undo}
+        >
           <Undo2 />
           撤销
         </button>
-        <button disabled={!redo.length} onClick={replay}>
+        <button className="extra-tool" disabled={!redo.length} onClick={replay}>
           <Redo2 />
           重做
         </button>
         <button
+          className="extra-tool"
           disabled={!d.actions.length}
           onClick={() => {
             if (confirm('清空本局禁选记录？双方阵容会保留。'))
@@ -361,11 +443,15 @@ export function Draft({
           <RotateCcw />
           重置
         </button>
-        <button aria-expanded={toolsOpen} onClick={() => setToolsOpen(!toolsOpen)}>
+        <button
+          className="extra-tool"
+          aria-expanded={toolsOpen}
+          onClick={() => setToolsOpen(!toolsOpen)}
+        >
           <UsersRound />
           战队/选手配置
         </button>
-        <button onClick={() => setArchive(true)}>
+        <button className="extra-tool" onClick={() => setArchive(true)}>
           <Archive />
           存档
         </button>
@@ -402,58 +488,74 @@ export function Draft({
         advice={data}
         players={players}
         heroes={heroes}
-        assign={(i, a) => change({ ...d, actions: d.actions.map((old, j) => (i === j ? a : old)) })}
+        assign={editAction}
+        replacing={replacing}
+        replace={(i) => {
+          setPending(null);
+          clearFilters();
+          setReplacing(i);
+          document.querySelector('.pending-anchor')?.scrollIntoView({ block: 'nearest' });
+        }}
       />
       <div className="bp-bench">
         <div className="pool-column">
           <div className="pending-anchor">
-            <section className={'pending-slot ' + (candidate ? 'armed' : '')} aria-label="待确认槽">
+            <section
+              className={
+                'pending-slot ' +
+                (editStep ? 'editing' : step.isOurTurn ? 'ours' : 'theirs') +
+                (candidate ? ' armed' : '')
+              }
+              aria-label="本手操作"
+            >
               <div className="pending-face">
                 {candidate ? <Portrait hero={candidate} /> : <Target size={26} />}
               </div>
               <div className="pending-info">
-                <small>
-                  待确认槽 · {sideNames[step.side]}
-                  {step.actionType === 'ban' ? '禁用' : '选取'}
-                </small>
-                <b>{candidate?.cnName ?? (step.isCompleted ? '本局禁选完成' : '请选择英雄')}</b>
-                {candidate ? (
-                  <span>
-                    {projected
-                      ? (projected.denied ? '若被选入 · ' : '选入后 · ') + projected.text
-                      : '正在计算阵容变化…'}
-                  </span>
-                ) : (
-                  <span>单击预选，双击锁入</span>
-                )}
+                <b aria-live="polite">
+                  {editStep
+                    ? '替换第 ' +
+                      editStep.step +
+                      ' 手（' +
+                      sideNames[editStep.side] +
+                      (editStep.actionType === 'ban' ? '禁用' : '选人') +
+                      '）'
+                    : step.isCompleted
+                      ? '本局禁选完成'
+                      : '第 ' +
+                        step.step +
+                        ' 手 · ' +
+                        (step.isOurTurn ? '轮到【我方】' : '等待【对方】') +
+                        actionText}
+                </b>
+                <span>
+                  {editStep
+                    ? '点下方英雄替换' +
+                      heroName(d.actions[editStep.step - 1].heroId) +
+                      '，后续手数照旧'
+                    : candidate
+                      ? '待锁定 · ' + candidate.cnName
+                      : step.isCompleted
+                        ? '点已锁定的英雄可以改手'
+                        : step.isOurTurn
+                          ? '参考我方推荐，选好后锁定'
+                          : '对方在游戏里锁出后，点下方英雄录入'}
+                </span>
               </div>
-              <button
-                className="confirm-pick"
-                disabled={!candidate || step.isCompleted}
-                onClick={() => pending && lock(pending)}
-              >
-                <Check size={15} />
-                {step.actionType === 'ban' ? '锁定禁用' : '锁定选择'}
-                <kbd>↵</kbd>
-              </button>
-              {candidate && (
-                <div className="pending-dims" aria-live="polite">
-                  {[
-                    ['disable', '先手'],
-                    ['frontline', '前排'],
-                    ['burst', '爆发'],
-                    ['sustain', '持续'],
-                    ['push', '推进'],
-                    ['teamfight', '团战'],
-                  ].map(([k, n]) => (
-                    <span key={k}>
-                      {n}{' '}
-                      <b>
-                        {projected ? '+' + projected.delta[k as keyof typeof projected.delta] : '…'}
-                      </b>
-                    </span>
-                  ))}
-                </div>
+              {editStep ? (
+                <button className="confirm-pick" onClick={() => setReplacing(null)}>
+                  取消替换
+                </button>
+              ) : (
+                <button
+                  className="confirm-pick"
+                  disabled={!candidate || step.isCompleted}
+                  onClick={() => pending && lock(pending)}
+                >
+                  <Check size={15} />
+                  {step.isOurTurn ? '锁定' + actionText : '录入对方'}
+                  <kbd>↵</kbd>
+                </button>
               )}
             </section>
           </div>
@@ -471,6 +573,17 @@ export function Draft({
             </button>
           </div>
           <HeroPoolGrid
+            query={query}
+            setQuery={(q) => {
+              setQuery(q);
+              setPending(null);
+            }}
+            role={roleFilter}
+            setRole={(r) => {
+              setRoleFilter(r);
+              setPending(null);
+            }}
+            replacing={replacing !== null}
             heroes={heroes}
             d={d}
             search={search}
@@ -478,12 +591,17 @@ export function Draft({
             select={select}
             lock={lock}
           />
-          {data && <CompositionMeter data={data} our={d.ourSide} preview={projected} select={select} />}
+          {data && (
+            <div inert={replacing !== null}>
+              <CompositionMeter data={data} our={d.ourSide} preview={projected} select={select} />
+            </div>
+          )}
         </div>
-        <aside>
+        <aside inert={replacing !== null}>
           {data ? (
             <RecommendationPanel
               data={data}
+              planAction={nextOurStep?.actionType}
               preference={preference}
               setPreference={setPreference}
               turn={turnKey}

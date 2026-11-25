@@ -109,7 +109,7 @@ function WardStats({ data }: { data: WardMap }) {
             ))}
           </ol>
         ) : (
-          <p className="hint">有眼位样本后，这里会列出布眼最集中的区域。</p>
+          <p className="hint">有了眼位记录，就能看到最常插眼的区域。</p>
         )}
       </section>
     </>
@@ -135,7 +135,7 @@ function FarmStats({ data }: { data: FarmMap }) {
           </div>
         </div>
         <p className="hint">
-          {s.matchCount} 场比赛 · {s.samplePlayers} 人次 · 位置权重 {s.totalWeight}
+          {s.matchCount} 场比赛 · {s.samplePlayers} 人次
         </p>
       </section>
       <section className="panel replay-card">
@@ -152,7 +152,7 @@ function FarmStats({ data }: { data: FarmMap }) {
             </label>
           </div>
         ))}
-        <p className="hint">按位置采样权重计算，同一名选手跨场分别计入。</p>
+        <p className="hint">按录像里英雄在各区出现的次数计算，多场一起看。</p>
       </section>
     </>
   );
@@ -289,8 +289,8 @@ function HeatmapPanel({
     else hint = '悬停或点按标记查看眼位详情，重复点按可查看重叠眼位。';
   } else if (farm)
     hint = farm.cells.length
-      ? '颜色越暖，选手在该区域的位置采样越密集。'
-      : '当前筛选下没有刷钱位置样本。';
+      ? '颜色越暖，选手越常在这一带活动。'
+      : '这些录像里还没找到刷钱路线。';
   const tags = Array.from(new Set(records.map((r) => r.tag).filter(Boolean)));
   const heroes = new Map(records.map((r) => [String(r.heroId), r.heroCnName]));
   return (
@@ -380,7 +380,7 @@ function HeatmapPanel({
               <p className="hint">
                 {selectedMatch
                   ? selectedMatch.heroCnName + ' · 比赛 ' + matchId
-                  : '全部已解析比赛聚合'}
+                  : '合看已解析的比赛'}
               </p>
             </div>
             <span className="density-legend">
@@ -613,7 +613,7 @@ export function Replays({
                   aria-pressed={matchId === null}
                   onClick={() => openPlayer(savedId)}
                 >
-                  全部已解析比赛聚合（{parsedCount ?? records.filter((r) => r.hasParsed).length}{' '}
+                  合看已解析的比赛（{parsedCount ?? records.filter((r) => r.hasParsed).length}{' '}
                   场）
                 </button>
               )}

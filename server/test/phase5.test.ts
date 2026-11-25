@@ -103,13 +103,13 @@ test('零选手获得双榜与双方六维诊断，禁用预览展示被拦截�
     assert.equal(new Set(rows.map((r) => r.heroId)).size, 10);
     for (const row of rows.slice(0, 3)) {
       assert.ok(row.score > 0 && row.score <= 100);
-      assert.match(row.details.metaSummary.text, /高分局/);
+      assert.match(row.details.metaSummary.text, /冠绝胜率.+登场/);
       assert.ok(row.compositionFit.text && row.compositionFit.boostedDims.length);
       assert.ok(Array.isArray(row.details.matchupDetails));
       assert.ok(!Object.hasOwn(row.details, 'playerFit'));
     }
   }
-  assert.ok(base.banRecommendations.every((r) => r.banCategory && r.whyBan?.includes('争夺率')));
+  assert.ok(base.banRecommendations.every((r) => r.banCategory && r.whyBan?.includes('登场')));
   // 保持敌方英雄、手数及可选英雄一致，仅替换我方首选。
   const scenario = (first: number) => ({
     actions: [1, 3, 4, 5, 8, 9, 10, first, 13].map((heroId) => ({ heroId })),
@@ -118,7 +118,7 @@ test('零选手获得双榜与双方六维诊断，禁用预览展示被拦截�
     durable = await advice(scenario(2));
   assert.equal(fragile.composition.our.scores.disable, 0);
   assert.equal(fragile.composition.our.scores.frontline, 0);
-  const score = (r: typeof base) => r.pickRecommendations.find((h) => h.heroId === 38)?.score ?? 0;
+  const score = (r: typeof base) => r.pickRecommendations.find((h) => h.heroId === 7)?.score ?? 0;
   assert.ok(score(fragile) > score(durable));
   assert.ok(fragile.composition.our.warnings.some((x) => x.includes('先手')));
   assert.equal(fragile.composition.enemy.assignments[0].heroId, 13);
@@ -214,6 +214,10 @@ test('7.42 实战顺序和历史存档各自推导禁用归属，缺少胜率样
   assert.equal(cmOrder('dire', 'classic')[1].side, 'radiant');
   const counts = {
     id: 1,
+    '5_win': 0,
+    '5_pick': 0,
+    '6_win': 0,
+    '6_pick': 0,
     '7_win': 0,
     '7_pick': 0,
     '8_win': 0,

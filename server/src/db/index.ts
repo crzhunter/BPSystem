@@ -7,6 +7,7 @@ import { patchMatchups } from '../data/matchupsSnapshot.ts';
 import { heroSnapshot, sampledAt, snapshotPatch } from '../data/snapshot.ts';
 import { itemsSnapshot } from '../data/itemsSnapshot.ts';
 import { storeConstants } from '../data/catalog.ts';
+import { deriveMeta, type HeroMeta } from '../data/heroMeta.ts';
 import { fillMissingPatches, patchScope } from '../services/settings.ts';
 
 export const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -45,6 +46,32 @@ export function migrate(db: DatabaseSync) {
           sampledAt,
         );
       if (version === 5) fillMissingPatches(db, patchScope(db));
+      if (version === 6) {
+        // v5 可能有用户同步过的职业对位和阵营样本。只追加新的天梯榜，保留旧快照及其日期。
+        const legacy = db
+          .prepare(
+            "SELECT hero_id,payload FROM hero_meta WHERE json_type(payload,'$.community_pub') IS NULL",
+          )
+          .all();
+        if (legacy.length) {
+          const old = new Map(
+            legacy.map((r) => [Number(r.hero_id), JSON.parse(String(r.payload)) as HeroMeta]),
+          );
+          const rows = heroSnapshot.map((h) => {
+            const m = old.get(h.id);
+            return {
+              ...h,
+              sideSample: m?.patch === snapshotPatch ? (m.sideBias ?? undefined) : h.sideSample,
+            };
+          });
+          const update = db.prepare(
+            'UPDATE hero_meta SET payload=json_set(payload,?,json(?)) WHERE hero_id=?',
+          );
+          for (const bracket of ['immortal_pub', 'community_pub'] as const)
+            for (const row of deriveMeta(rows, snapshotPatch, sampledAt, bracket))
+              if (old.has(row.id)) update.run('$.' + bracket, JSON.stringify(row), row.id);
+        }
+      }
       db.prepare('INSERT INTO schema_migrations VALUES (?,?)').run(
         version,
         new Date().toISOString(),

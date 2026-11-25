@@ -8,7 +8,10 @@ export function Portrait({ hero }: { hero: Face }) {
   const [failure, setFailure] = useState<{ id: number; remote: boolean }>();
   if (failure?.id === hero.id && failure.remote)
     return (
-      <span aria-label={hero.cnName} className={'face-fallback' + (hero.primaryAttr ? ' attr-' + hero.primaryAttr : '')}>
+      <span
+        aria-label={hero.cnName}
+        className={'face-fallback' + (hero.primaryAttr ? ' attr-' + hero.primaryAttr : '')}
+      >
         {hero.cnName.slice(0, 2)}
       </span>
     );
@@ -48,6 +51,11 @@ export function HeroPoolGrid({
   select,
   lock,
   search,
+  query,
+  setQuery,
+  replacing,
+  role,
+  setRole,
 }: {
   heroes: Hero[];
   d: Room;
@@ -55,9 +63,12 @@ export function HeroPoolGrid({
   select: (id: number) => void;
   lock: (id: number) => void;
   search: RefObject<HTMLInputElement | null>;
+  query: string;
+  setQuery: (value: string) => void;
+  replacing: boolean;
+  role: number;
+  setRole: (value: number) => void;
 }) {
-  const [query, setQuery] = useState(''),
-    [role, setRole] = useState(0);
   const sections = useMemo(
     () =>
       groups.map((g) => ({
@@ -113,6 +124,17 @@ export function HeroPoolGrid({
             placeholder="英雄名、拼音首字母或简称"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || e.nativeEvent.isComposing || !term || pending) return;
+              const hits = sections.flatMap((g) =>
+                g.list.filter(({ h, terms }) => !used.has(h.id) && matches(h, terms)),
+              );
+              if (hits.length === 1) {
+                e.preventDefault();
+                e.stopPropagation();
+                lock(hits[0].h.id);
+              }
+            }}
           />
           <kbd>/</kbd>
         </label>
@@ -162,13 +184,18 @@ export function HeroPoolGrid({
                       !match ? 'dimmed' : filtering ? 'matched' : '',
                       selected ? 'selected' : '',
                     ].join(' ')}
-                    disabled={!!taken || d.actions.length === 24}
+                    disabled={!!taken || (!replacing && d.actions.length === 24)}
                     aria-pressed={selected}
                     onClick={() => select(h.id)}
                     onDoubleClick={() => lock(h.id)}
                   >
                     <Portrait hero={h} />
-                    <span className="tile-name">{h.cnName}</span>
+                    <span className="tile-name">
+                      {h.cnName.length > 4
+                        ? (h.aliases.find((a) => a.length <= 4 && /[\u3400-\u9fff]/.test(a)) ??
+                          h.cnName)
+                        : h.cnName}
+                    </span>
                     {taken && (
                       <b className={'taken ' + (taken.actionType === 'ban' ? 'ban' : taken.side)}>
                         {label}

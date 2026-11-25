@@ -113,7 +113,7 @@ export function CompositionMeter({
           <article key={w.id} data-severity={w.severity}>
             <strong>{w.title}</strong>
             <p>{w.detail}</p>
-            {!!w.heroes.length && <small>{key === 'our' ? '补强推荐' : '破阵克制推荐'}</small>}
+            {!!w.heroes.length && <small>{key === 'our' ? '我方可补' : '我方可拿来克制'}</small>}
             <div>
               {w.heroes.map((h) => (
                 <button

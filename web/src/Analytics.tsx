@@ -60,7 +60,7 @@ export function SlotIntel({ id, side, revision }: { id: number; side: Side; revi
     <div className="intel">
       <span>
         {side === 'radiant' ? '天辉' : '夜魇'} ·{' '}
-        {split.games ? pct(split.winrate) + ' 胜率' : '暂无样本'}
+        {split.games ? pct(split.winrate) + ' 胜率' : '还没打过'}
       </span>
       {profile.privacyHint && (
         <span className="private" title={profile.privacyHint}>
@@ -70,7 +70,7 @@ export function SlotIntel({ id, side, revision }: { id: number; side: Side; revi
       {profile.heroPool.slice(0, 3).map((h) => (
         <span className="hero-pill" key={h.heroId}>
           <b>{h.name}</b>
-          <small>{h.isPatch742Sample ? '7.42 样本' : '旧版参考'}</small>
+          <small>{h.isPatch742Sample ? '7.42 起有战绩' : '旧版参考'}</small>
           {h.patchTournament.games > 0 && <small>赛 {pct(h.patchTournament.winrate)}</small>}
           {h.patchPub.games > 0 && <small>路 {pct(h.patchPub.winrate)}</small>}
         </span>
@@ -137,7 +137,7 @@ function ProfileCard({ player }: { player: Player }) {
             {h.grade} · {h.name}
           </b>
           <span>
-            {h.isPatch742Sample ? '7.42 样本 · ' + h.patch742Wins + ' 胜 / ' + h.patch742Games + ' 场' : '旧版参考 · 过往曾用'} · 加权分 {h.weightedScore}
+            {h.isPatch742Sample ? '7.42 起有战绩 · ' + h.patch742Wins + ' 胜 / ' + h.patch742Games + ' 场' : '旧版参考 · 过往曾用'} · 熟练分 {h.weightedScore}
           </span>
           <small>
             历史比赛 {h.tournament.games} 场 · 胜率 {pct(h.tournament.winrate)}　生涯路人 {h.pub.games} 场 · 胜率{' '}

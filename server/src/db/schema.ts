@@ -123,4 +123,5 @@ ALTER TABLE player_pub_matches ADD COLUMN patch INTEGER;
 ALTER TABLE player_pub_heroes ADD COLUMN patch_games INTEGER NOT NULL DEFAULT 0 CHECK(patch_games >= 0);
 ALTER TABLE player_pub_heroes ADD COLUMN patch_wins INTEGER NOT NULL DEFAULT 0 CHECK(patch_wins BETWEEN 0 AND patch_games);
 `,
+  "INSERT OR IGNORE INTO settings VALUES('metaBracket','immortal_pub',CURRENT_TIMESTAMP)",
 ];

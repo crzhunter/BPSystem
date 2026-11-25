@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
 import { recommend } from '../services/bpEngine.ts';
+import { isMetaBracket } from '../data/heroMeta.ts';
 import { parsePreference } from '../services/rolePriority.ts';
 import { normalizeDraft, readSession, writeSession } from '../services/draftState.ts';
 import { syncMatchups } from '../services/matchups.ts';
@@ -31,7 +32,8 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
   function edit(
     sessionId: number,
     body: Record<string, unknown>,
-    operation: 'update' | 'action' | 'undo' | 'reset',
+    operation: 'update' | 'action' | 'replace' | 'undo' | 'reset',
+    stepIndex?: number,
   ) {
     return transaction(db, () => {
       const old = readSession(db, sessionId);
@@ -44,13 +46,23 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
       }));
       let input: Record<string, unknown> = { ...old, actions };
       if (operation === 'update') input = { ...input, ...body };
-      if (operation === 'action') {
-        const step = integer(body.stepIndex ?? body.step ?? actions.length + 1, 1, 24, '禁选步骤');
+      if (operation === 'action' || operation === 'replace') {
+        if (operation === 'action')
+          check(!actions.some((a) => a.heroId === body.heroId), '该英雄已被禁用或选取');
+        const step =
+          stepIndex ??
+          integer(body.stepIndex ?? body.step ?? actions.length + 1, 1, 24, '禁选步骤');
+        if (operation === 'replace') {
+          check(step <= actions.length, '这手还没锁定');
+          check(
+            ['heroId', 'roleHint', 'assignedPlayerId'].some((k) => Object.hasOwn(body, k)),
+            '请选择要替换的英雄、位置或选手',
+          );
+        }
         check(step <= actions.length + 1, '请先完成前面的禁选步骤');
-        check(!actions.some((a) => a.heroId === body.heroId), '该英雄已被禁用或选取');
         // 显式指定已执行的步号可修正录入；后续步骤仍按完整快照重新校验。
         const edited: unknown[] = [...actions];
-        edited[step - 1] = body;
+        edited[step - 1] = operation === 'replace' ? { ...actions[step - 1], ...body } : body;
         input.actions = edited;
       }
       if (operation === 'undo') {
@@ -62,6 +74,16 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
     });
   }
   r.put(path + '/:id', (req, res) => res.json(edit(id(Number(req.params.id)), req.body, 'update')));
+  r.put(path + '/:id/action/:stepIndex', (req, res) =>
+    res.json(
+      edit(
+        id(Number(req.params.id)),
+        req.body,
+        'replace',
+        integer(Number(req.params.stepIndex), 1, 24, '禁选步骤'),
+      ),
+    ),
+  );
   for (const op of ['action', 'undo', 'reset'] as const)
     r.post(path + '/:id/' + op, (req, res) =>
       res.json(edit(id(Number(req.params.id)), req.body ?? {}, op)),
@@ -71,7 +93,9 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
       throw new HttpError(404, '对局存档不存在');
     res.sendStatus(204);
   });
-  r.post('/bp/recommend', (req, res) =>
+  r.post('/bp/recommend', (req, res) => {
+    const bracket = req.body.metaBracket;
+    check(bracket === undefined || isMetaBracket(bracket), '请选择冠绝/超凡或大众社区赛');
     res.json(
       recommend(
         db,
@@ -82,9 +106,10 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
           ? undefined
           : integer(req.body.previewHeroId, 1, Number.MAX_SAFE_INTEGER, '预览英雄'),
         parsePreference(req.body.rolePreference),
+        bracket,
       ),
-    ),
-  );
+    );
+  });
   r.post('/heroes/matchups/sync', async (req, res) =>
     res.json(await syncMatchups(db, client, req.body?.heroIds)),
   );

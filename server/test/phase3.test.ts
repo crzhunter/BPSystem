@@ -239,7 +239,8 @@ test('情报卡保留赛事绝活，按同场同阵营统计组合，仅计入�
     actions: [],
   };
   const intel = await req('/bp/recommend', 'POST', input);
-  assert.ok(!intel.banRecommendations.slice(0, 3).some((h: {heroId: number}) => h.heroId === 94));
+  const signature = intel.banRecommendations.find((h: {heroId: number}) => h.heroId === 94);
+  assert.equal(signature?.banCategory, 'player_signature');
   const card = intel.scoutingCard,
     top = card.topBans.find((h: {heroId: number}) => h.heroId === 94);
   assert.equal(top.owner.playerId, 1);

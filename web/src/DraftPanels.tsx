@@ -215,7 +215,7 @@ export function Scouting({
           </p>
         </div>
       ))}
-      {!data.topBans.length && <p>暂无对手英雄池样本。</p>}
+      {!data.topBans.length && <p>还没找到对手的英雄战绩。</p>}
       <h3>招牌组合</h3>
       {data.comfortCombos.map((c) => (
         <p className="combo" key={c.heroIds.join('-')}>

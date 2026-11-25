@@ -104,8 +104,7 @@ export function parseConstants(input: Inputs) {
       );
       const counts = Object.fromEntries(statKeys.map((k) => [k, numberField(m[k])])) as Counts;
       upstream(
-        counts['7_win'] <= counts['7_pick'] &&
-          counts['8_win'] <= counts['8_pick'] &&
+        ([5, 6, 7, 8] as const).every(rank => counts[`${rank}_win`] <= counts[`${rank}_pick`]) &&
           counts.pro_win <= counts.pro_pick,
       );
       return {

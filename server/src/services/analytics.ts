@@ -213,7 +213,7 @@ export function analytics(db: DatabaseSync, id: number, now = Date.now() / 1000)
         weightedScore: score,
         threatScore: score,
         grade: score >= 70 ? 'S' : score >= 50 ? 'A' : 'B',
-        source: tour.games && games ? '双源融合' : tour.games ? '比赛局' : '路人局',
+        source: tour.games && games ? '赛事和天梯' : tour.games ? '比赛局' : '路人局',
       };
     })
     .filter((h) => h.tournament.games || h.pub.games || h.patch742Games)

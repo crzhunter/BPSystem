@@ -4,6 +4,7 @@ import { transaction } from '../db/index.ts';
 import { normalizeDraft, readSession } from '../services/draftState.ts';
 import { check, HttpError } from '../utils/input.ts';
 import { fillMissingPatches, patchScope } from '../services/settings.ts';
+import { isMetaBracket } from '../data/heroMeta.ts';
 
 const tables = [
   'settings',
@@ -20,7 +21,7 @@ const tables = [
   'draft_actions',
   'hero_matchups',
 ] as const;
-const settingsWhere = " WHERE key IN ('pub_recent_days','tournament_match_weight','player_pool_weight')";
+const settingsWhere = " WHERE key IN ('pub_recent_days','tournament_match_weight','player_pool_weight','metaBracket')";
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -50,6 +51,10 @@ function validateJson(column: string, value: string, table: string) {
   }
 }
 function validateSetting(row: Record<string, unknown>) {
+  if (row.key === 'metaBracket') {
+    check(isMetaBracket(row.value), '备份中的天梯分段无效');
+    return;
+  }
   const n = Number(row.value);
   check(
     typeof row.value === 'string' &&
@@ -147,6 +152,8 @@ export function backupRoutes(db: DatabaseSync) {
           }
           counts[t] = rows.length;
         }
+        // 旧备份没有分段偏好，恢复后按首次开局的默认榜继续。
+        db.exec("INSERT OR IGNORE INTO settings VALUES('metaBracket','immortal_pub',CURRENT_TIMESTAMP)");
         if (snapshot.version !== 2) {
           // 备份恢复也经过实时对局的顺序、重复英雄和归属校验，避免绕过普通写入入口。
           const actions = db.prepare(`SELECT step_index step,action_type actionType,side,

@@ -129,7 +129,7 @@ test('v1 原位升级保留既有阵容、比赛和自定义权重；新库采�
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((r) => r.version),
-      [1, 2, 3, 4, 5],
+      [1, 2, 3, 4, 5, 6],
     );
     db.exec('DELETE FROM settings');
     assert.equal(readSettings(db).tournamentMatchWeight, 4);
@@ -258,7 +258,7 @@ test('同步、去重、多来源阵营胜率和加权池，修改设置立即�
   assert.deepEqual(a.recentForm.streak, { count: 2, type: '连胜' });
   assert.equal(a.roleDistribution[0].games, 3);
   const hero = a.heroPool.find((h: { heroId: number }) => h.heroId === 1);
-  assert.equal(hero.source, '双源融合');
+  assert.equal(hero.source, '赛事和天梯');
   assert.equal(hero.pub.games, 19);
   assert.equal(hero.pub.wins, 11);
   assert.equal(hero.pub.recentGames, 2);

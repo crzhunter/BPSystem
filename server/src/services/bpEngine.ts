@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { cmOrder, currentStep, opposite, sideNames, type Side } from '../data/cmOrder.ts';
 import { listHeroes } from '../data/catalog.ts';
-import { round, clamp } from '../data/heroMeta.ts';
+import { round, clamp, type MetaBracket } from '../data/heroMeta.ts';
 import { counterNotes, synergy } from '../data/heroSynergy.ts';
 import {
   diagnose,
@@ -15,12 +15,12 @@ import {
 } from './composition.ts';
 import { slotsFor, type Action, type Draft } from './draftState.ts';
 import { comfortCombos, scoutRoster, type Member } from './scouting.ts';
-import { readSettings } from './settings.ts';
+import { readSettings, savedBracket } from './settings.ts';
 import { candidateRoles, roleBadge, rolePriority, type RolePreference } from './rolePriority.ts';
 import { forecast } from './draftForecast.ts';
 
-function context(db: DatabaseSync, draft: Draft) {
-  const heroes = listHeroes(db);
+function context(db: DatabaseSync, draft: Draft, bracket: MetaBracket) {
+  const heroes = listHeroes(db, bracket);
   return {
     heroes,
     playerShare: readSettings(db).playerPoolWeight,
@@ -32,11 +32,12 @@ function context(db: DatabaseSync, draft: Draft) {
 }
 // 同一草稿连续选人只改变动作。只保留最近一组阵容，数据写入、外部连接提交或时间窗口移动后重新统计。
 const cached = new WeakMap<DatabaseSync, { key: string; value: ReturnType<typeof context> }>();
-function localContext(db: DatabaseSync, draft: Draft) {
+function localContext(db: DatabaseSync, draft: Draft, bracket: MetaBracket) {
   const version = db
     .prepare('SELECT total_changes() n, data_version v FROM pragma_data_version')
     .get()!;
   const key = [
+    bracket,
     version.n,
     version.v,
     Math.floor(Date.now() / 60000),
@@ -46,7 +47,7 @@ function localContext(db: DatabaseSync, draft: Draft) {
   ].join('/');
   const old = cached.get(db);
   if (old?.key === key) return old.value;
-  const value = context(db, draft);
+  const value = context(db, draft, bracket);
   cached.set(db, { key, value });
   return value;
 }
@@ -72,10 +73,17 @@ function owners(heroId: number, members: Member[], side: Side, roles: number[]) 
           sideGames: games,
           sideWins: wins,
           isPatch742Sample: h.isPatch742Sample,
+          specialist:
+            (h.patch742Games >= 3 && 2 * h.patch742Wins >= h.patch742Games) ||
+            (t.games >= 2 && 2 * t.wins >= t.games),
         },
       ];
     })
-    .sort((a, b) => b.weightedScore + b.sideBonus - a.weightedScore - a.sideBonus);
+    .sort(
+      (a, b) =>
+        Number(b.specialist) - Number(a.specialist) ||
+        b.weightedScore + b.sideBonus - a.weightedScore - a.sideBonus,
+    );
 }
 type Owner = ReturnType<typeof owners>[number];
 const identity = ({ playerId, name, role }: Owner) => ({ playerId, name, role });
@@ -175,7 +183,7 @@ function matchup(
     let deltaPct: number | null = null;
     if (sample) {
       const wins = direct ? sample.wins : sample.games - sample.wins;
-      // 以英雄自身高分段胜率为基线，十场先验衰减小样本对排名的影响。
+      // 对阵场数少时，降低偶然胜负对排名的影响。
       deltaPct = round((100 * wins) / sample.games - (h.meta.baseWinrate ?? 50));
       const prior = sample.prior,
         priorGames = prior ? Math.min(8, prior.games) : 0;
@@ -208,7 +216,7 @@ function matchup(
             e.cnName +
             ' ' +
             sample.games +
-            ' 场，胜率较高分局基线 ' +
+            ' 场，相比平时天梯胜率 ' +
             (deltaPct! >= 0 ? '+' : '') +
             deltaPct +
             ' 个百分点'
@@ -270,7 +278,6 @@ function candidate(
   allies: Selection[],
   enemies: Selection[],
   audit: Diagnosis,
-  members: Member[],
   side: Side,
   draft: Draft,
   phase: number,
@@ -278,9 +285,9 @@ function candidate(
   matrix: ReturnType<typeof matchupMatrix>,
   w: ReturnType<typeof weights>,
   roles: number[],
+  options: Owner[],
 ) {
   const open = roles.filter((r) => audit.missingRoles.includes(r));
-  const options = owners(h.id, members, side, open);
   const owner = options[0];
   const role = owner?.role ?? open[0] ?? roles[0];
   const fit = fitCandidate(h, allies, audit, isBan ? '敌方' : '我方', role);
@@ -294,17 +301,15 @@ function candidate(
     sideText,
     sampledAt: m.sampledAt,
     highMmrPicks: m.counts['7_pick'] + m.counts['8_pick'],
-    winrate: m.highMmrWinrate,
+    games: m.games,
+    winrate: m.baseWinrate,
     pickRate: m.pickRate,
     proContestedRate: m.proContestedRate,
     text:
-      m.patch +
-      ' 版本 ' +
-      m.tier +
-      ' · 高分局' +
-      (m.highMmrWinrate === null ? '暂无胜率' : '胜率 ' + m.highMmrWinrate + '%') +
-      ' · 职业赛 BP 率 ' +
-      m.proContestedRate +
+      (m.metaBracket === 'community_pub' ? '社区赛' : '冠绝') +
+      (m.baseWinrate === null ? '暂无战绩' : '胜率 ' + m.baseWinrate + '%') +
+      ' · 登场 ' +
+      m.pickRate +
       '%',
   };
   const edge = matchup(h, allies, enemies, matrix);
@@ -322,7 +327,8 @@ function candidate(
         : side === draft.firstPickSide
           ? 50
           : 62;
-  const viable = open.length > 0 && m.tier !== 'T3';
+  const signature = m.needsSpecialist && !!owner?.specialist;
+  const viable = open.length > 0 && (signature || m.tier !== 'T3');
   const playerValue =
     owner && viable
       ? clamp(
@@ -333,21 +339,17 @@ function candidate(
       : 0;
   const openingPick = !isBan && phase === 1;
   const compositionValue = openingPick ? fit.value * 0.65 + (role >= 4 ? 35 : 0) : fit.value;
-  const score = round(
+  const baseline = round(
     clamp(
       w.meta * m.strength +
         w.composition * compositionValue +
         w.matchup * edge.impact +
-        w.strategy *
-          clamp(
-            strategy +
-              (sideSample
-                ? (28 * (sideSample.wins - sideSample.games / 2)) / (sideSample.games + 10)
-                : 0),
-          ) +
+        w.strategy * strategy +
         w.player * playerValue,
     ),
   );
+  // 绝活分只给确有本版战绩、且仍能接下该位置的队员。
+  const score = signature ? round(baseline + (100 - baseline) * 0.72) : baseline;
   const danger = edge.notes.find(
     (n) =>
       n.kind === 'counter' &&
@@ -356,7 +358,7 @@ function candidate(
   );
   const duo = edge.notes.find((n) => n.kind === 'synergy');
   const category =
-    owner && viable && proficient(owner)
+    signature || (owner && viable && proficient(owner))
       ? 'player_signature'
       : danger
         ? 'protect_core'
@@ -392,10 +394,10 @@ function candidate(
     : undefined;
   const motivation = {
     player_signature: '限制' + (owner?.name ?? '对手') + '的熟练英雄',
-    protect_core: '为我方核心移除不利对位',
+    protect_core: '替我方核心禁掉难打的对位',
     deny_piece: '拆掉敌方已亮英雄的配合点',
     cheese_24th: '防止后选方末手拿出难以临场应对的核心',
-    meta_op: '压缩对手可抢的强势英雄池',
+    meta_op: '别让对手抢到这档天梯的热门英雄',
   }[category];
   const detailReason =
     category === 'player_signature'
@@ -409,18 +411,24 @@ function candidate(
                 (counterNotes.has(h.id + '/' + n.vsHeroId) || (n.deltaPct ?? 0) > 2),
             )?.text
           : undefined;
+  function matchupTip() {
+    if (danger) return '能限制' + danger.vsHeroName;
+    if (duo) return '能接' + duo.vsHeroName + '的技能';
+    if ((m.baseWinrate ?? 0) >= 52) return isBan ? '这档天梯赢得多，别让对手先抢' : '这档天梯赢得多，可以优先抢';
+    if (flex) return '能摇摆，先拿也不用亮分路';
+    if (h.tags.includes('save')) return '能救被先手的队友';
+    if (h.tags.includes('highMobility')) return '能绕过前排找后排';
+    if (h.tags.includes('push')) return '赢团后能带队拆塔';
+    if (h.tags.includes('burst')) return '接队友的控制打一轮爆发';
+    return '天梯登场 ' + m.pickRate + '%';
+  }
   const whyBan =
-    (phase > 1 ? '封锁敌方 ' + role + ' 号位。' : '') +
+    (phase > 1 ? '盯住对方 ' + role + ' 号位。' : '') +
     motivation +
     '。' +
     (detailReason ? detailReason + '。' : '') +
-    '职业赛 ' +
-    m.counts.pro_pick +
-    ' 选 ' +
-    m.counts.pro_ban +
-    ' 禁，争夺率 ' +
-    m.proContestedRate +
-    '%。';
+    metaSummary.text +
+    '。';
   const details = {
     metaSummary,
     compositionFit: fit.fit,
@@ -440,7 +448,22 @@ function candidate(
     ...roleBadge(h),
     playerContribution: round(w.player * playerValue),
     suggestedPlayerId: owner?.isPatch742Sample ? owner.playerId : null,
-    shortTags: isBan ? [banLabels[category], m.tier] : [role + ' 号位', flex ? '可摇摆' : m.tier],
+    shortTags: signature
+      ? [isBan ? '敌方绝活预警' : '我方绝活', role + ' 号位']
+      : isBan
+        ? [banLabels[category], m.tier]
+        : [role + ' 号位', flex ? '可摇摆' : m.tier],
+    tips: [
+      signature
+        ? owner!.name + '能打这手绝活'
+        : isBan
+          ? motivation
+          : (fit.fit.fillsRole
+              ? '补我方 ' + fit.fit.fillsRole + ' 号位'
+              : '可打 ' + role + ' 号位') +
+            (fit.fit.boostedDims.length ? '，补' + dimLabels[fit.fit.boostedDims[0]] : ''),
+      matchupTip(),
+    ],
     reasons: [
       isBan ? whyBan : fit.fit.text,
       ...fit.fit.boostedDims.map((k) => dimLabels[k] + ' +' + fit.fit.delta[k]),
@@ -457,12 +480,15 @@ export function recommend(
   draft: Draft,
   previewHeroId?: number,
   preference: RolePreference = 'auto',
+  metaBracket: MetaBracket = savedBracket(db),
 ) {
-  const data = localContext(db, draft),
+  const data = localContext(db, draft, metaBracket),
     our = draft.ourSide,
     enemy = opposite(our),
     order = cmOrder(draft.firstPickSide, draft.cmOrderVersion);
   const step = currentStep(draft.firstPickSide, our, draft.actions.length, draft.cmOrderVersion);
+  // 对方行动时，两张榜都服务于我方下一手；当前回合仍单独返回，供现场录入。
+  const plan = order.slice(draft.actions.length).find((s) => s.side === our) ?? step;
   const picks = (side: Side) =>
     draft.actions.filter((_, i) => order[i].side === side && order[i].actionType === 'pick');
   const ours = picks(our),
@@ -475,11 +501,11 @@ export function recommend(
     members.filter((m) => !picks.some((a) => a.assignedPlayerId === m.playerId));
   const own = available(data[our].members, ours),
     opp = available(data[enemy].members, theirs);
-  const pickWeights = weights(own, allies.length, step.step, data.playerShare),
-    banWeights = weights(opp, enemies.length, step.step, data.playerShare);
+  const pickWeights = weights(own, allies.length, plan.step, data.playerShare),
+    banWeights = weights(opp, enemies.length, plan.step, data.playerShare);
   const roleModes = {
-    pick: rolePriority(preference, step.step, ourAudit, false),
-    ban: rolePriority(preference, step.step, theirAudit, true),
+    pick: rolePriority(preference, plan.step, ourAudit, false),
+    ban: rolePriority(preference, plan.step, theirAudit, true),
   };
   const matrix = matchupMatrix(db, [...ours, ...theirs]),
     used = new Set(draft.actions.map((a) => a.heroId));
@@ -487,50 +513,66 @@ export function recommend(
     picksRanked = [],
     topBans = [],
     flexPicks = [];
+  const ourSpecialists = new Set<number>();
   for (const h of data.heroes) {
     if (used.has(h.id) || step.isCompleted) continue;
-    const pickRoles = candidateRoles(h, roleModes.pick, step.step <= 9, ourAudit.missingRoles);
-    if (ours.length < 5 && pickRoles.length)
+    const ownOptions = owners(
+      h.id,
+      own,
+      our,
+      h.typicalRoles.filter((r) => ourAudit.missingRoles.includes(r)),
+    );
+    if (ownOptions.some((o) => o.specialist)) ourSpecialists.add(h.id);
+    let pickRoles = candidateRoles(h, roleModes.pick, plan.step <= 9, ourAudit.missingRoles);
+    if (h.meta.needsSpecialist && preference === 'auto' && !pickRoles.length)
+      pickRoles = ownOptions.filter((o) => o.specialist).map((o) => o.role);
+    const pickOwners = ownOptions.filter((o) => pickRoles.includes(o.role));
+    if (
+      ours.length < 5 &&
+      pickRoles.length &&
+      (!h.meta.needsSpecialist || pickOwners.some((o) => o.specialist))
+    )
       picksRanked.push(
         candidate(
           h,
           allies,
           enemies,
           ourAudit,
-          own,
           our,
           draft,
-          step.phase,
+          plan.phase,
           false,
           matrix,
           pickWeights,
           pickRoles,
+          pickOwners,
         ),
       );
     if (theirs.length === 5) continue;
     const banRoles = candidateRoles(h, roleModes.ban, false, theirAudit.missingRoles);
     if (!banRoles.length) continue;
-    const ban = candidate(
-      h,
-      enemies,
-      allies,
-      theirAudit,
-      opp,
-      enemy,
-      draft,
-      step.phase,
-      true,
-      matrix,
-      banWeights,
-      banRoles,
-    );
-    bans.push(ban);
     const targets = owners(
       h.id,
       opp,
       enemy,
       banRoles.filter((r) => theirAudit.missingRoles.includes(r)),
     );
+    if (h.meta.needsSpecialist && !targets.some((o) => o.specialist)) continue;
+    const ban = candidate(
+      h,
+      enemies,
+      allies,
+      theirAudit,
+      enemy,
+      draft,
+      plan.phase,
+      true,
+      matrix,
+      banWeights,
+      banRoles,
+      targets,
+    );
+    bans.push(ban);
     if (targets.length) {
       const o = targets[0];
       topBans.push({
@@ -567,9 +609,17 @@ export function recommend(
   const composition = analyzeLineups(
     ourAudit,
     theirAudit,
-    step.isCompleted ? [] : data.heroes.filter((h) => !used.has(h.id)),
+    step.isCompleted || ours.length === 5 ? [] : data.heroes.filter((h) => !used.has(h.id)),
+    ourSpecialists,
   );
   return {
+    metaBracket,
+    bracketNote:
+      metaBracket === 'community_pub'
+        ? '取传奇、万古、超凡天梯战绩'
+        : data.heroes.some((h) => h.meta.counts['8_pick'] > 0)
+          ? '取超凡、冠绝天梯战绩'
+          : '冠绝暂无样本，当前取超凡天梯战绩',
     currentStep: step,
     lineupAudit: { ...ourAudit, warnings: composition.our.warnings },
     composition,

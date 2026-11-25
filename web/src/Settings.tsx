@@ -115,7 +115,7 @@ export function SettingsView({
   }
   return (
     <>
-      <PageIntro title="系统设置" description="配置赛事分析参数、数据源与手机访问。" />
+      <PageIntro title="系统设置" description="管理战绩、备份和手机访问。" />
       {loadError && (
         <div className="notice">
           {loadError} <button onClick={() => setRetry((n) => n + 1)}>重新加载</button>
@@ -167,7 +167,7 @@ export function SettingsView({
         <section className="form-panel panel">
           <h2>
             <SlidersHorizontal />
-            分析默认值
+            战绩怎么算
           </h2>
           <form
             onSubmit={(e) => {
@@ -180,7 +180,7 @@ export function SettingsView({
           >
             <div className="form-grid">
               <label>
-                赛事对局权重（倍）
+                一场赛事抵几场天梯
                 <input
                   type="number"
                   min="0"
@@ -192,7 +192,7 @@ export function SettingsView({
                 />
               </label>
               <label>
-                近期路人范围（天）
+                回看最近几天的天梯
                 <input
                   type="number"
                   min="1"
@@ -206,7 +206,7 @@ export function SettingsView({
             <div className="actions">
               <button className="primary" disabled={!settings || !!busy}>
                 <Save size={14} />
-                保存参数
+                保存战绩设置
               </button>
             </div>
           </form>
@@ -220,12 +220,12 @@ export function SettingsView({
             {heroCount}
             <small>名英雄</small>
           </p>
-          <p className="hint">读取 Valve 中文资料与 OpenDota 高分局、职业赛样本。</p>
+          <p className="hint">从 OpenDota 更新分段天梯战绩，从 Valve 更新英雄和物品资料。</p>
           <button className="subtle-button" disabled={!!busy} onClick={sync}>
             <RefreshCw size={15} className={busy === 'sync' ? 'spin' : ''} />
             {busy === 'sync'
               ? '正在同步…'
-              : '同步最新 ' + (settings?.patch ?? '7.42') + ' 英雄 / 物品 / 版本常量'}
+              : '同步最新 ' + (settings?.patch ?? '7.42') + ' 英雄、物品和天梯榜'}
           </button>
         </section>
         <section className="form-panel panel">
@@ -253,7 +253,7 @@ export function SettingsView({
             数据备份与恢复
           </h2>
           <p className="hint">
-            备份包含选手、阵容、比赛、存档、历史英雄对位和分析设置。恢复后沿用本机当前版本的常量与接口密钥。
+            备份包含选手、阵容、比赛、存档、历史英雄对位和分析设置。恢复后沿用本机现有英雄资料和接口密钥。
           </p>
           <div className="match-tools">
             <a className="subtle-button" href="/api/backup/export" download>

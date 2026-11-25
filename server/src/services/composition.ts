@@ -313,7 +313,12 @@ function signals(a: Diagnosis, opposing: Diagnosis, attack: boolean): Answer[] {
 }
 
 // 补强和破阵都由我方执行。先筛能解决该问题的英雄，再用我方空位和版本表现排序。
-export function analyzeLineups(our: Diagnosis, enemy: Diagnosis, pool: Hero[]) {
+export function analyzeLineups(
+  our: Diagnosis,
+  enemy: Diagnosis,
+  pool: Hero[],
+  specialists = new Set<number>(),
+) {
   const regenReasons: Record<number, string> = {
     68: '冰晶爆轰封锁回血，集火逼出斩杀线。',
     69: '末日封治疗，阎刃按最大生命值持续烧血。',
@@ -326,12 +331,13 @@ export function analyzeLineups(our: Diagnosis, enemy: Diagnosis, pool: Hero[]) {
     // 冰魂、末日直接封治疗；破被动和按血量削血属于次选手段。
     const direct = (h: Hero) => Number(rule.id === 'regen' && [68, 69].includes(h.id));
     return pool
-      .filter(rule.accepts)
+      .filter((h) => rule.accepts(h) && (!h.meta.needsSpecialist || specialists.has(h.id)))
       .sort(
         (a, b) =>
           Number(!!role(b)) - Number(!!role(a)) ||
           direct(b) - direct(a) ||
-          b.meta.strength - a.meta.strength ||
+          Number(specialists.has(b.id)) - Number(specialists.has(a.id)) ||
+          playability(b) - playability(a) ||
           a.id - b.id,
       )
       .slice(0, 3)
@@ -342,6 +348,9 @@ export function analyzeLineups(our: Diagnosis, enemy: Diagnosis, pool: Hero[]) {
         role: role(h) ?? h.typicalRoles[0],
         reason: rule.id === 'regen' ? regenReasons[h.id] : rule.reason,
       }));
+  }
+  function playability(h: Hero) {
+    return (h.meta.baseWinrate ?? 0) * (0.7 + 0.3 * Math.min(h.meta.pickRate / 15, 1));
   }
   const info = ({ id, severity, title, detail }: Answer) => ({ id, severity, title, detail });
   const weaknesses = signals(our, enemy, false).map((rule) => ({
