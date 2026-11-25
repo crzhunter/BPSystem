@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
+import { normalizeDraft, readSession } from '../services/draftState.ts';
 import { check, HttpError } from '../utils/input.ts';
 
 const tables = [
@@ -29,6 +30,12 @@ function validateJson(column: string, value: string, table: string) {
     check(object(parsed), '分路坐标无效');
   } else {
     check(Array.isArray(parsed), '备份中的列表字段无效');
+    if (column === 'radiant_players_json' || column === 'dire_players_json')
+      check(
+        parsed.length === 5 &&
+          parsed.every((id) => id === null || (Number.isSafeInteger(id) && id > 0)),
+        '备份中的对局位置无效',
+      );
     if (column === 'roles_json' && table === 'players')
       check(
         parsed.every((role) => Number.isInteger(role) && role >= 1 && role <= 5),
@@ -64,16 +71,16 @@ export function backupRoutes(db: DatabaseSync) {
       ),
     );
     res.attachment('BPSystem-' + new Date().toISOString().slice(0, 10) + '.json');
-    res.json({ version: 2, exportedAt: new Date().toISOString(), ...data });
+    res.json({ version: 3, exportedAt: new Date().toISOString(), ...data });
   });
   r.post('/backup/import', (req, res) => {
     const snapshot: Record<string, unknown> = req.body;
     check(
-      snapshot.version === 2 &&
+      (snapshot.version === 2 || snapshot.version === 3) &&
         typeof snapshot.exportedAt === 'string' &&
         Number.isFinite(Date.parse(snapshot.exportedAt)) &&
         tables.every((t) => Array.isArray(snapshot[t])),
-      '请选择完整的二期 JSON 备份',
+      '请选择完整的二期或三期 JSON 备份',
     );
     try {
       const counts = transaction(db, () => {
@@ -93,7 +100,11 @@ export function backupRoutes(db: DatabaseSync) {
               ')',
           );
           const rows = snapshot[t] as unknown[];
-          for (const row of rows) {
+          for (let row of rows) {
+            if (t === 'draft_sessions' && snapshot.version === 2 && object(row)) {
+              const empty = '[null,null,null,null,null]';
+              row = { ...row, radiant_players_json: empty, dire_players_json: empty, revision: 1 };
+            }
             check(object(row) && Object.keys(row).length === columns.length, '备份字段不完整');
             if (t === 'settings') validateSetting(row);
             if (t === 'players')
@@ -120,6 +131,16 @@ export function backupRoutes(db: DatabaseSync) {
             insert.run(...values);
           }
           counts[t] = rows.length;
+        }
+        if (snapshot.version === 3) {
+          // 备份恢复也经过实时对局的顺序、重复英雄和归属校验，避免绕过普通写入入口。
+          const actions = db.prepare(`SELECT step_index step,action_type actionType,side,
+            hero_id heroId,assigned_player_id assignedPlayerId,role_hint roleHint
+            FROM draft_actions WHERE session_id=? ORDER BY step_index`);
+          for (const row of db.prepare('SELECT id FROM draft_sessions').all()) {
+            const session = readSession(db, Number(row.id));
+            normalizeDraft(db, { ...session, actions: actions.all(row.id) });
+          }
         }
         db.exec('DELETE FROM api_cache');
         return counts;

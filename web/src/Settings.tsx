@@ -73,7 +73,7 @@ export function SettingsView({
     }
   }
   async function restore(file: File) {
-    if (!confirm('用这份备份替换当前选手、战队、比赛和分析设置？本机接口密钥会保留。')) return;
+    if (!confirm('用这份备份替换当前选手、战队、比赛、对局存档、英雄对位和分析设置？本机接口密钥会保留。')) return;
     setBusy('restore');
     try {
       let snapshot: unknown;
@@ -242,7 +242,7 @@ export function SettingsView({
             数据备份与恢复
           </h2>
           <p className="hint">
-            备份包含选手、阵容、比赛、英雄资料和分析设置。恢复将替换本机对应数据，接口密钥保留在当前服务器。
+            备份包含选手、阵容、比赛、对局存档、英雄资料、对位数据和分析设置。恢复将替换本机对应数据，接口密钥保留在当前服务器。
           </p>
           <div className="match-tools">
             <a className="subtle-button" href="/api/backup/export" download>

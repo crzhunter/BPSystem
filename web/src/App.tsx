@@ -137,7 +137,7 @@ export function App() {
         </header>
         <main>
           {page.id === 'draft' ? (
-            <Draft players={players} teams={teams} heroes={heroes} notify={notify} />
+            <Draft players={players} teams={teams} heroes={heroes} notify={notify} ready={online === true} />
           ) : page.id === 'matches' ? (
             <Matches heroes={heroes} refresh={refresh} notify={notify} />
           ) : page.id === 'players' ? (

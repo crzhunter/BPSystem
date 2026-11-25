@@ -7,6 +7,7 @@ import { rosterRoutes } from './routes/rosters.ts';
 import { systemRoutes } from './routes/system.ts';
 import { matchRoutes } from './routes/matches.ts';
 import { backupRoutes } from './routes/backup.ts';
+import { bpRoutes } from './routes/bp.ts';
 import { OpenDotaClient } from './services/opendota.ts';
 import { HttpError } from './utils/input.ts';
 
@@ -26,8 +27,13 @@ export function createApp(
       res.set('Cache-Control', 'no-store');
       if (
         ['POST', 'PUT'].includes(req.method) &&
-        !/^\/(?:heroes|(?:players|teams)\/\d+)\/sync$/.test(req.path) &&
-        (!req.body || Array.isArray(req.body) || typeof req.body !== 'object')
+        (!req.body || Array.isArray(req.body) || typeof req.body !== 'object') &&
+        !(
+          req.body === undefined &&
+          /^\/(?:(?:heroes(?:\/matchups)?|(?:players|teams)\/\d+)\/sync|bp\/sessions\/\d+\/(?:undo|reset))$/.test(
+            req.path,
+          )
+        )
       )
         return next(new HttpError(400, '请提交 JSON 对象'));
       next();
@@ -35,6 +41,7 @@ export function createApp(
     systemRoutes(db, client, port),
     rosterRoutes(db, client),
     matchRoutes(db, client),
+    bpRoutes(db, client),
     backupRoutes(db),
   );
   app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));

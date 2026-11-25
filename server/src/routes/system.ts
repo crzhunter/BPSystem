@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { heroTags } from '../data/heroTags.ts';
 import { hostname, networkInterfaces } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
@@ -87,6 +88,7 @@ export function systemRoutes(db: DatabaseSync, client: OpenDotaClient, port: num
           primaryAttr: h.primary_attr,
           attackType: h.attack_type,
           roles: JSON.parse(String(h.roles_json)),
+          ...heroTags(Number(h.id), JSON.parse(String(h.roles_json))),
         }))
         .filter((h) =>
           [h.name, h.localizedName, h.cnName, ...h.aliases].some((s) =>

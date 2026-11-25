@@ -129,7 +129,7 @@ test('v1 原位升级保留既有阵容、比赛和自定义权重；新库采�
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((r) => r.version),
-      [1, 2],
+      [1, 2, 3],
     );
     db.exec('DELETE FROM settings');
     assert.equal(readSettings(db).tournamentMatchWeight, 4);
@@ -383,7 +383,7 @@ test('JSON 全量往返，密钥留在本机，错误外键与无效 JSON 数据
   await f.req('/matches/import', 'POST', { matchIds: [789] });
   await f.req('/settings', 'PUT', { opendotaApiKey: 'local-test-secret', pubRecentDays: 37 });
   const snap = await f.req('/backup/export');
-  assert.equal(snap.version, 2);
+  assert.equal(snap.version, 3);
   assert.ok(!JSON.stringify(snap).includes('local-test-secret'));
   assert.equal(snap.match_players.length, 10);
   assert.equal(snap.player_pub_heroes.length, 1);

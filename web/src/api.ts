@@ -23,6 +23,8 @@ export type Hero = {
   localizedName: string;
   aliases: string[];
   img: string;
+  primaryAttr: string;
+  typicalRoles: number[];
 };
 export type Settings = {
   hasOpenDotaApiKey: boolean;

@@ -89,4 +89,18 @@ CREATE TABLE player_pub_matches (
 );
 CREATE INDEX pub_player_time ON player_pub_matches(player_id, start_time DESC);
 `,
+  `
+ALTER TABLE draft_sessions ADD COLUMN radiant_players_json TEXT NOT NULL DEFAULT '[null,null,null,null,null]';
+ALTER TABLE draft_sessions ADD COLUMN dire_players_json TEXT NOT NULL DEFAULT '[null,null,null,null,null]';
+ALTER TABLE draft_sessions ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+CREATE INDEX matchup_opponent ON hero_matchups(against_hero_id,hero_id);
+CREATE TRIGGER clear_draft_slot AFTER DELETE ON players BEGIN
+  UPDATE draft_sessions SET radiant_players_json=json_set(radiant_players_json,
+    (SELECT fullkey FROM json_each(radiant_players_json) WHERE value=OLD.id),NULL), revision=revision+1
+    WHERE EXISTS(SELECT 1 FROM json_each(radiant_players_json) WHERE value=OLD.id);
+  UPDATE draft_sessions SET dire_players_json=json_set(dire_players_json,
+    (SELECT fullkey FROM json_each(dire_players_json) WHERE value=OLD.id),NULL), revision=revision+1
+    WHERE EXISTS(SELECT 1 FROM json_each(dire_players_json) WHERE value=OLD.id);
+END;
+`,
 ];
