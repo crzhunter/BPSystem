@@ -7,7 +7,7 @@ import { patchMatchups } from '../data/matchupsSnapshot.ts';
 import { heroSnapshot, sampledAt, snapshotPatch } from '../data/snapshot.ts';
 import { itemsSnapshot } from '../data/itemsSnapshot.ts';
 import { storeConstants } from '../data/catalog.ts';
-import { deriveMeta, type HeroMeta } from '../data/heroMeta.ts';
+import { deriveMeta, statKeys, type Counts, type HeroMeta, type SideSample } from '../data/heroMeta.ts';
 import { fillMissingPatches, patchScope } from '../services/settings.ts';
 
 export const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -22,6 +22,46 @@ export function transaction<T>(db: DatabaseSync, work: () => T): T {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+function migrateLadder(db: DatabaseSync) {
+  // v6 双榜保存了相同的四档原始计数。由 v5 升级过的库把完整快照放在 community_pub。
+  const legacy = db.prepare(`
+    SELECT hero_id,coalesce(json_extract(payload,'$.community_pub'),payload) sample
+    FROM hero_meta WHERE json_type(payload,'$.ladder') IS NULL
+  `).all();
+  if (!legacy.length) return;
+  const bundled = new Map(heroSnapshot.map((h) => [h.id, h]));
+  type Sample = Counts & { id: number; sideSample?: SideSample };
+  const batches = new Map<string, { patch: string; date: string; heroes: Sample[] }>();
+  for (const entry of legacy) {
+    const id = Number(entry.hero_id);
+    const stored = JSON.parse(String(entry.sample)) as
+      Pick<HeroMeta, 'patch' | 'sampledAt' | 'sideBias'> & { counts: Partial<Counts> };
+    const { patch } = stored;
+    let date = stored.sampledAt;
+    let counts = stored.counts;
+    let sideSample: SideSample | undefined = stored.sideBias ?? undefined;
+    // v5 仅有高分计数。同补丁有更新的完整快照时整批采用，避免把不同日期的胜场和登场混算。
+    const seed = bundled.get(id);
+    if (seed && counts['5_pick'] === undefined && patch === snapshotPatch && date <= sampledAt) {
+      counts = seed;
+      date = sampledAt;
+      sideSample ??= seed.sideSample;
+    }
+    const key = JSON.stringify([patch, date]);
+    const batch = batches.get(key) ?? { patch, date, heroes: [] };
+    batch.heroes.push({
+      ...(Object.fromEntries(statKeys.map((k) => [k, counts[k] ?? 0])) as Counts),
+      id,
+      sideSample,
+    });
+    batches.set(key, batch);
+  }
+  // 只追加新榜，旧采样、时间戳和阵营记录仍可追溯。事务失败时整批撤销。
+  const update = db.prepare("UPDATE hero_meta SET payload=json_set(payload,'$.ladder',json(?)) WHERE hero_id=?");
+  for (const { heroes, patch, date } of batches.values())
+    for (const row of deriveMeta(heroes, patch, date)) update.run(JSON.stringify(row), row.id);
 }
 
 export function migrate(db: DatabaseSync) {
@@ -46,32 +86,7 @@ export function migrate(db: DatabaseSync) {
           sampledAt,
         );
       if (version === 5) fillMissingPatches(db, patchScope(db));
-      if (version === 6) {
-        // v5 可能有用户同步过的职业对位和阵营样本。只追加新的天梯榜，保留旧快照及其日期。
-        const legacy = db
-          .prepare(
-            "SELECT hero_id,payload FROM hero_meta WHERE json_type(payload,'$.community_pub') IS NULL",
-          )
-          .all();
-        if (legacy.length) {
-          const old = new Map(
-            legacy.map((r) => [Number(r.hero_id), JSON.parse(String(r.payload)) as HeroMeta]),
-          );
-          const rows = heroSnapshot.map((h) => {
-            const m = old.get(h.id);
-            return {
-              ...h,
-              sideSample: m?.patch === snapshotPatch ? (m.sideBias ?? undefined) : h.sideSample,
-            };
-          });
-          const update = db.prepare(
-            'UPDATE hero_meta SET payload=json_set(payload,?,json(?)) WHERE hero_id=?',
-          );
-          for (const bracket of ['immortal_pub', 'community_pub'] as const)
-            for (const row of deriveMeta(rows, snapshotPatch, sampledAt, bracket))
-              if (old.has(row.id)) update.run('$.' + bracket, JSON.stringify(row), row.id);
-        }
-      }
+      if (version === 7) migrateLadder(db);
       db.prepare('INSERT INTO schema_migrations VALUES (?,?)').run(
         version,
         new Date().toISOString(),

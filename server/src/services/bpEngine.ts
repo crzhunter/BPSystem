@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { cmOrder, currentStep, opposite, sideNames, type Side } from '../data/cmOrder.ts';
 import { listHeroes } from '../data/catalog.ts';
-import { round, clamp, type MetaBracket } from '../data/heroMeta.ts';
+import { round, clamp } from '../data/heroMeta.ts';
 import { counterNotes, synergy } from '../data/heroSynergy.ts';
 import {
   diagnose,
@@ -15,12 +15,12 @@ import {
 } from './composition.ts';
 import { slotsFor, type Action, type Draft } from './draftState.ts';
 import { comfortCombos, scoutRoster, type Member } from './scouting.ts';
-import { readSettings, savedBracket } from './settings.ts';
+import { readSettings } from './settings.ts';
 import { candidateRoles, roleBadge, rolePriority, type RolePreference } from './rolePriority.ts';
 import { forecast } from './draftForecast.ts';
 
-function context(db: DatabaseSync, draft: Draft, bracket: MetaBracket) {
-  const heroes = listHeroes(db, bracket);
+function context(db: DatabaseSync, draft: Draft) {
+  const heroes = listHeroes(db);
   return {
     heroes,
     playerShare: readSettings(db).playerPoolWeight,
@@ -32,12 +32,11 @@ function context(db: DatabaseSync, draft: Draft, bracket: MetaBracket) {
 }
 // 同一草稿连续选人只改变动作。只保留最近一组阵容，数据写入、外部连接提交或时间窗口移动后重新统计。
 const cached = new WeakMap<DatabaseSync, { key: string; value: ReturnType<typeof context> }>();
-function localContext(db: DatabaseSync, draft: Draft, bracket: MetaBracket) {
+function localContext(db: DatabaseSync, draft: Draft) {
   const version = db
     .prepare('SELECT total_changes() n, data_version v FROM pragma_data_version')
     .get()!;
   const key = [
-    bracket,
     version.n,
     version.v,
     Math.floor(Date.now() / 60000),
@@ -47,7 +46,7 @@ function localContext(db: DatabaseSync, draft: Draft, bracket: MetaBracket) {
   ].join('/');
   const old = cached.get(db);
   if (old?.key === key) return old.value;
-  const value = context(db, draft, bracket);
+  const value = context(db, draft);
   cached.set(db, { key, value });
   return value;
 }
@@ -306,8 +305,7 @@ function candidate(
     pickRate: m.pickRate,
     proContestedRate: m.proContestedRate,
     text:
-      (m.metaBracket === 'community_pub' ? '社区赛' : '冠绝') +
-      (m.baseWinrate === null ? '暂无战绩' : '胜率 ' + m.baseWinrate + '%') +
+      (m.baseWinrate === null ? '暂无天梯战绩' : '综合胜率 ' + m.baseWinrate + '%') +
       ' · 登场 ' +
       m.pickRate +
       '%',
@@ -397,7 +395,7 @@ function candidate(
     protect_core: '替我方核心禁掉难打的对位',
     deny_piece: '拆掉敌方已亮英雄的配合点',
     cheese_24th: '防止后选方末手拿出难以临场应对的核心',
-    meta_op: '别让对手抢到这档天梯的热门英雄',
+    meta_op: '别让对手抢到天梯热门英雄',
   }[category];
   const detailReason =
     category === 'player_signature'
@@ -414,7 +412,7 @@ function candidate(
   function matchupTip() {
     if (danger) return '能限制' + danger.vsHeroName;
     if (duo) return '能接' + duo.vsHeroName + '的技能';
-    if ((m.baseWinrate ?? 0) >= 52) return isBan ? '这档天梯赢得多，别让对手先抢' : '这档天梯赢得多，可以优先抢';
+    if ((m.baseWinrate ?? 0) >= 52) return isBan ? '天梯胜率高，别让对手先抢' : '天梯胜率高，可以优先抢';
     if (flex) return '能摇摆，先拿也不用亮分路';
     if (h.tags.includes('save')) return '能救被先手的队友';
     if (h.tags.includes('highMobility')) return '能绕过前排找后排';
@@ -480,9 +478,8 @@ export function recommend(
   draft: Draft,
   previewHeroId?: number,
   preference: RolePreference = 'auto',
-  metaBracket: MetaBracket = savedBracket(db),
 ) {
-  const data = localContext(db, draft, metaBracket),
+  const data = localContext(db, draft),
     our = draft.ourSide,
     enemy = opposite(our),
     order = cmOrder(draft.firstPickSide, draft.cmOrderVersion);
@@ -613,13 +610,6 @@ export function recommend(
     ourSpecialists,
   );
   return {
-    metaBracket,
-    bracketNote:
-      metaBracket === 'community_pub'
-        ? '取传奇、万古、超凡天梯战绩'
-        : data.heroes.some((h) => h.meta.counts['8_pick'] > 0)
-          ? '取超凡、冠绝天梯战绩'
-          : '冠绝暂无样本，当前取超凡天梯战绩',
     currentStep: step,
     lineupAudit: { ...ourAudit, warnings: composition.our.warnings },
     composition,

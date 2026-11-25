@@ -129,7 +129,6 @@ export function Draft({
     let active = true;
     api<Advice>('/bp/recommend', 'POST', { ...d, rolePreference: preference })
       .then((data) => {
-        if (!data.metaBracket) throw new Error('请重启 BP 助手，载入新版天梯榜。');
         if (active) setAnalysis({ draft: d, revision, data });
       })
       .catch((e) => {
@@ -181,17 +180,6 @@ export function Draft({
     } finally {
       editInFlight.current = false;
       setSavingEdit(false);
-    }
-  }
-  async function switchBracket(metaBracket: Advice['metaBracket']) {
-    setBusy('分段');
-    try {
-      await api('/settings', 'PUT', { metaBracket });
-      setRevision((n) => n + 1);
-    } catch (e) {
-      notify(failure(e), true);
-    } finally {
-      setBusy('');
     }
   }
   function undo() {
@@ -349,25 +337,6 @@ export function Draft({
           {d.patch}
           {d.cmOrderVersion === 'classic' ? ' · 历史顺序' : ''}
         </b>
-        <div className="bracket-choice" role="group" aria-label="分段模式">
-          {(['immortal_pub', 'community_pub'] as const).map((mode) => (
-            <button
-              key={mode}
-              disabled={!!busy || !data}
-              aria-pressed={analysis?.data?.metaBracket === mode}
-              onClick={() => void switchBracket(mode)}
-            >
-              {mode === 'immortal_pub' ? '冠绝/超凡' : '大众社区赛'}
-            </button>
-          ))}
-        </div>
-        <button
-          className="more-tools"
-          aria-expanded={moreTools}
-          onClick={() => setMoreTools(!moreTools)}
-        >
-          {moreTools ? '收起操作' : '更多操作'}
-        </button>
         <label>
           我方阵营
           <select
@@ -418,6 +387,13 @@ export function Draft({
         <button className="fast-toggle" aria-pressed={instant} onClick={() => setInstant(!instant)}>
           <i />
           单击直锁
+        </button>
+        <button
+          className="more-tools"
+          aria-expanded={moreTools}
+          onClick={() => setMoreTools(!moreTools)}
+        >
+          {moreTools ? '收起操作' : '更多操作'}
         </button>
         <button
           className="extra-tool"

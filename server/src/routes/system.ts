@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { listHeroes, listItems } from '../data/catalog.ts';
-import { isMetaBracket } from '../data/heroMeta.ts';
 import { hostname, networkInterfaces } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
@@ -51,10 +50,6 @@ export function systemRoutes(db: DatabaseSync, client: OpenDotaClient, port: num
     transaction(db, () => {
       const set = db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?,?)');
       const now = new Date().toISOString();
-      if (req.body.metaBracket !== undefined) {
-        check(isMetaBracket(req.body.metaBracket), '请选择冠绝/超凡或大众社区赛');
-        set.run('metaBracket', req.body.metaBracket, now);
-      }
       if (opendotaApiKey !== undefined)
         set.run('opendota_api_key', stringValue(opendotaApiKey, '接口密钥', 512), now);
       if (tournamentMatchWeight !== undefined) {

@@ -129,7 +129,7 @@ test('v1 原位升级保留既有阵容、比赛和自定义权重；新库采�
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((r) => r.version),
-      [1, 2, 3, 4, 5, 6],
+      [1, 2, 3, 4, 5, 6, 7],
     );
     db.exec('DELETE FROM settings');
     assert.equal(readSettings(db).tournamentMatchWeight, 4);

@@ -2,7 +2,6 @@ import { Router } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
 import { recommend } from '../services/bpEngine.ts';
-import { isMetaBracket } from '../data/heroMeta.ts';
 import { parsePreference } from '../services/rolePriority.ts';
 import { normalizeDraft, readSession, writeSession } from '../services/draftState.ts';
 import { syncMatchups } from '../services/matchups.ts';
@@ -94,8 +93,6 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
     res.sendStatus(204);
   });
   r.post('/bp/recommend', (req, res) => {
-    const bracket = req.body.metaBracket;
-    check(bracket === undefined || isMetaBracket(bracket), '请选择冠绝/超凡或大众社区赛');
     res.json(
       recommend(
         db,
@@ -106,7 +103,6 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
           ? undefined
           : integer(req.body.previewHeroId, 1, Number.MAX_SAFE_INTEGER, '预览英雄'),
         parsePreference(req.body.rolePreference),
-        bracket,
       ),
     );
   });

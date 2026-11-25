@@ -12,7 +12,7 @@ import { itemsSnapshot } from '../src/data/itemsSnapshot.ts';
 import { attributes, deriveMeta } from '../src/data/heroMeta.ts';
 import { cmOrder } from '../src/data/cmOrder.ts';
 import type { recommend } from '../src/services/bpEngine.ts';
-import type { listHeroes } from '../src/data/catalog.ts';
+import { listHeroes } from '../src/data/catalog.ts';
 
 async function service(t: TestContext, fetcher?: typeof fetch) {
   const db = openDb(':memory:');
@@ -103,7 +103,7 @@ test('零选手获得双榜与双方六维诊断，禁用预览展示被拦截�
     assert.equal(new Set(rows.map((r) => r.heroId)).size, 10);
     for (const row of rows.slice(0, 3)) {
       assert.ok(row.score > 0 && row.score <= 100);
-      assert.match(row.details.metaSummary.text, /冠绝胜率.+登场/);
+      assert.match(row.details.metaSummary.text, /综合胜率.+登场/);
       assert.ok(row.compositionFit.text && row.compositionFit.boostedDims.length);
       assert.ok(Array.isArray(row.details.matchupDetails));
       assert.ok(!Object.hasOwn(row.details, 'playerFit'));
@@ -198,8 +198,9 @@ test('常量、中文资料及分阵营样本完整后才发布快照，错误�
   );
   assert.equal((await (await request('/bp/sessions', {})).json()).patch, '7.43');
   const before = db.prepare('SELECT payload FROM hero_meta WHERE hero_id=1').get()?.payload;
-  assert.equal(JSON.parse(String(before)).counts.pro_ban, 0);
-  assert.equal(JSON.parse(String(before)).sideBias.radiantWinrate, 75);
+  const synced = listHeroes(db).find((h) => h.id === 1)!.meta;
+  assert.equal(synced.counts.pro_ban, 0);
+  assert.equal(synced.sideBias?.radiantWinrate, 75);
   invalid = true;
   assert.equal((await request('/constants/sync', {})).status, 502);
   assert.equal(db.prepare('SELECT payload FROM hero_meta WHERE hero_id=1').get()?.payload, before);

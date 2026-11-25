@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | GET | `/health` | 返回 `ok, db, heroCount, timestamp`。 |
 | GET | `/system/network` | 返回后端 `port, hostname, lanUrls[]`。开发网页向手机展示同一主机的 Vite 端口。 |
-| GET | `/settings` | 返回 `patch, hasOpenDotaApiKey, maskedPreview, tournamentMatchWeight, pubRecentDays, playerPoolWeight, metaBracket`。 |
+| GET | `/settings` | 返回 `patch, hasOpenDotaApiKey, maskedPreview, tournamentMatchWeight, pubRecentDays, playerPoolWeight`。 |
 | PUT | `/settings` | 部分更新接口密钥、赛事局倍数、近期窗口或英雄池权重。密钥最多 512 字符，空串清除。新库默认 4 倍、60 天、0.18。兼容旧请求的赛事倍数 0–100，生效范围 0–8。窗口取整数 1–365，英雄池权重自动限制在 0.15–0.20。 |
 | GET | `/heroes?q=` | 可按中英文名、内部名、简称搜索。数组项含 `id, name, localizedName, cnName, aliases, img, icon, portraitUrl, meta, primaryAttr, attackType, roles, typicalRoles, tags`。 |
 | GET | `/items` | 按 ID 升序返回物品数组，每项含 `id, key, cnName, localizedName, imgUrl`。英雄及物品的全尺寸图片地址均指向 Steam CDN。 |
@@ -18,7 +18,7 @@
 | POST | `/heroes/sync` | 无必填字段，更新本地英雄资料，返回 `{synced,heroCount}`。 |
 | POST | `/heroes/matchups/sync` | `{"heroIds":[1,2]}` 同步指定英雄对位。空数组跳过，省略则请求全库。返回 `{requested,synced,results:[{heroId,count,error?}]}`，遇上游错误停止该批次。 |
 
-`PUT /settings` 接受部分更新，例如 `{"metaBracket":"community_pub"}`。新库和没有分段偏好的旧备份默认使用 `immortal_pub`。两种取值分别使用超凡＋冠绝、传奇＋万古＋超凡的天梯记录。非法值返回 400。英雄列表与推荐读取同一设置，别名忽略大小写，重名简称可返回多个英雄。
+英雄列表和 BP 推荐统一使用四档天梯综合榜。对局室顶栏从版本号直接进入阵营和先选方设置。旧库、`GET /heroes` 的查询参数、`POST /bp/recommend` 与 `PUT /settings` 的请求体、以及导入备份中的 `metaBracket` 和 `metaProfile` 均被忽略，包括未知旧值。其他字段照常校验。英雄搜索忽略别名大小写，重名简称可返回多个英雄。
 
 ## 选手、战队与战绩
 
@@ -132,9 +132,9 @@
 
 英雄的 `primaryAttr` 为 str、agi、int、all。`meta` 包含 tier、baseWinrate、highMmrWinrate、pickRate、proContestedRate、proBanRate、sideBias、counts、sampledAt 和 patch。百分比标度为 0–100，缺少胜率或阵营样本时对应值为 null。
 
-`meta.metaBracket, games, baseWinrate, pickRate, strength, needsSpecialist` 描述当前榜单；`highMmrWinrate` 始终对应 7＋8 档。`counts` 保留 5–8 档各自的 `_pick`、`_win` 以及职业选禁原值。职业选禁在强度中的权重为零。
+`meta.games` 是英雄在四档的登场总数。`pickRate` 是综合登场率，各档先以全英雄登场总数除以 10 得到该档场数。`baseWinrate` 是综合胜率，各档先用 `100 × (胜场 + 50) / (登场数 + 100)` 平滑。两项按冠绝 40%、超凡 28%、万古 20%、传奇 12% 合成。高分两档中仅一档有比赛时独占高分组的 68%。其余整档缺样时按有效组权重归一。单个英雄在有比赛的档位零登场仍计入该档，四档均无该英雄登场时胜率为 null、强度为 0。
 
-`POST /bp/recommend` 可带 `metaBracket` 临时指定分段，也适用于 `sessionId` 请求。响应返回实际使用的 `metaBracket` 和数据来源提示 `bracketNote`。推荐项的 `tips` 为简短理由。`metaSummary.games/winrate/pickRate` 对应所选分段，`highMmrPicks` 始终对应 7＋8 档。需专人操刀的英雄只有在对应阵营有空位和本版实战证明时才进入候选；敌方符合条件时 `shortTags` 包含「敌方绝活预警」。
+`strength` 和 `tier` 按综合天梯表现生成，职业选取和禁用均占 0%。`counts` 保留 5–8 档各自的 `_pick`、`_win` 及职业原值。`highMmrWinrate` 是 7＋8 档合计的原始胜率，供查阅。推荐项的 `metaSummary.games/winrate/pickRate` 与英雄列表的登场数、综合胜率、综合登场率一致，`highMmrPicks` 为 7＋8 档登场数。`needsSpecialist` 使用绝活名单和取整前低于 2.5% 的综合登场率。对应阵营有空位且选手有 7.42 起的实战证明时才能解锁。敌方符合条件时禁用推荐的 `shortTags` 包含「敌方绝活预警」。
 
 例如，向 `PUT /bp/sessions/3/action/8` 提交 `{"heroId":27,"revision":5}`，只换第八手英雄并保留该手分工和后续动作。重复英雄、还没走到的手号、禁人分配位置、选手冲突返回 400；存档不存在返回 404；提交过期修订号返回 409。失败时整笔撤销。
 
@@ -163,4 +163,4 @@
 | GET | `/backup/export` | 下载 JSON，含 `version:4`、`exportedAt` 和各业务表数组，文件名为 `BPSystem-YYYY-MM-DD.json`。 |
 | POST | `/backup/import` | 接受版本 2、3、4。旧快照按原始逐场时间识别版本样本。事务内替换业务数据、保留本机密钥、清理请求缓存，返回 `{counts:{表名:行数}}`。错误快照整笔回滚。 |
 
-快照包括 `settings, heroes, players, teams, team_members, matches, match_players, match_picks_bans, player_pub_heroes, player_pub_matches, draft_sessions, draft_actions, hero_matchups`。录像字段随比赛与参赛者一起备份。恢复时保留本机当前版本的英雄常量、物品及模型样本，补入历史备份独有的英雄记录。设置导出赛事倍数、英雄池权重、近期窗口和天梯分段。当前浏览器草稿和查询中的任务编号分别保存在浏览器本地存储和会话存储。
+快照包括 `settings, heroes, players, teams, team_members, matches, match_players, match_picks_bans, player_pub_heroes, player_pub_matches, draft_sessions, draft_actions, hero_matchups`。录像字段随比赛与参赛者一起备份。恢复时保留本机当前版本的英雄常量、物品及模型样本，补入历史备份独有的英雄记录。设置导出赛事倍数、英雄池权重和近期窗口。旧备份的两种分段设置行在导入时跳过，`counts.settings` 只统计实际恢复的设置行。当前浏览器草稿和查询中的任务编号分别保存在浏览器本地存储和会话存储。

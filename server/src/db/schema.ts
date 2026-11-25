@@ -123,5 +123,6 @@ ALTER TABLE player_pub_matches ADD COLUMN patch INTEGER;
 ALTER TABLE player_pub_heroes ADD COLUMN patch_games INTEGER NOT NULL DEFAULT 0 CHECK(patch_games >= 0);
 ALTER TABLE player_pub_heroes ADD COLUMN patch_wins INTEGER NOT NULL DEFAULT 0 CHECK(patch_wins BETWEEN 0 AND patch_games);
 `,
-  "INSERT OR IGNORE INTO settings VALUES('metaBracket','immortal_pub',CURRENT_TIMESTAMP)",
+  '-- v6 的分段偏好已停用，旧库保留原设置。',
+  '-- v7 从原始计数生成综合榜，数据迁移与版本号在同一事务提交。',
 ];

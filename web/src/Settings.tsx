@@ -220,7 +220,7 @@ export function SettingsView({
             {heroCount}
             <small>名英雄</small>
           </p>
-          <p className="hint">从 OpenDota 更新分段天梯战绩，从 Valve 更新英雄和物品资料。</p>
+          <p className="hint">从 OpenDota 更新天梯战绩，从 Valve 更新英雄和物品资料。</p>
           <button className="subtle-button" disabled={!!busy} onClick={sync}>
             <RefreshCw size={15} className={busy === 'sync' ? 'spin' : ''} />
             {busy === 'sync'

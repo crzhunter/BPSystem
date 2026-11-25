@@ -1,7 +1,7 @@
 import express, { type ErrorRequestHandler } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 import { root } from './db/index.ts';
 import { rosterRoutes } from './routes/rosters.ts';
 import { systemRoutes } from './routes/system.ts';
@@ -19,6 +19,7 @@ export function createApp(
   client = new OpenDotaClient(db),
   production = process.env.NODE_ENV === 'production',
   replayAdapter: ReplayParserAdapter = new OpenDotaReplayAdapter(db),
+  dist = resolve(root, 'web/dist'),
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -49,10 +50,23 @@ export function createApp(
     backupRoutes(db),
   );
   app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
-  const dist = resolve(root, 'web/dist');
   if (production && existsSync(resolve(dist, 'index.html'))) {
-    app.use(express.static(dist));
-    app.get('/{*path}', (_req, res) => res.sendFile(resolve(dist, 'index.html')));
+    const noStore = 'no-store, no-cache, must-revalidate';
+    app.use(
+      express.static(dist, {
+        setHeaders(res, path) {
+          const file = relative(dist, path).split(sep).join('/');
+          // 入口随部署切换；只有 Vite 文件名带内容哈希的资源可长期复用。
+          let policy = 'no-cache';
+          if (file === 'index.html' || file === 'sw.js') policy = noStore;
+          else if (/^assets\/[^/]+-[\w-]{8}\.\w+$/.test(file)) policy = 'public, max-age=31536000, immutable';
+          res.setHeader('Cache-Control', policy);
+        },
+      }),
+    );
+    app.get('/{*path}', (_req, res) =>
+      res.sendFile('index.html', { root: dist, headers: { 'Cache-Control': noStore } }),
+    );
   }
   const onError: ErrorRequestHandler = (e, _req, res, _next) => {
     if (e instanceof HttpError) {

@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { isMetaBracket, patch742Id, patch742StartTime } from '../data/heroMeta.ts';
+import { patch742Id, patch742StartTime } from '../data/heroMeta.ts';
 import { sampledAt } from '../data/snapshot.ts';
 
 export type PatchScope = {
@@ -15,14 +15,9 @@ export function setting(db: DatabaseSync, key: string) {
 export function apiKey(db: DatabaseSync) {
   return setting(db, 'opendota_api_key') || process.env.OPENDOTA_API_KEY || '';
 }
-export function savedBracket(db: DatabaseSync) {
-  const value = setting(db, 'metaBracket');
-  return isMetaBracket(value) ? value : 'immortal_pub';
-}
 export function readSettings(db: DatabaseSync) {
   const key = apiKey(db);
   return {
-    metaBracket: savedBracket(db),
     patch: setting(db, 'constants_patch') ?? '7.42',
     hasOpenDotaApiKey: !!key,
     maskedPreview: key ? '••••' + (key.length > 4 ? key.slice(-4) : '') : '',

@@ -47,7 +47,7 @@ export function RecommendationPanel({
                 : '我方禁选已结束'}
         </h2>
         <small>
-          {data.patch} · {data.bracketNote}
+          {data.patch} 天梯加权综合（高分主导）
         </small>
       </div>
       <fieldset className="position-choice">
@@ -150,7 +150,7 @@ export function RecommendationPanel({
                     <dd
                       title={
                         r.metaSummary.sampledAt.slice(0, 10) +
-                        ' · 该分段 ' +
+                        ' · 天梯合计 ' +
                         r.metaSummary.games +
                         ' 次选取'
                       }

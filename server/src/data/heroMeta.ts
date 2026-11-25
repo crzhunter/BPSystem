@@ -28,10 +28,8 @@ export const statKeys = [
   'pro_ban',
 ] as const;
 export type Counts = Record<(typeof statKeys)[number], number>;
-export type MetaBracket = 'immortal_pub' | 'community_pub';
-export function isMetaBracket(value: unknown): value is MetaBracket {
-  return value === 'immortal_pub' || value === 'community_pub';
-}
+const ladderRanks = [8, 7, 6, 5] as const;
+const rankWeights = { 8: 40, 7: 28, 6: 20, 5: 12 };
 // 这些英雄即使一时胜率很高，也需要队伍有人能接这手绝活。
 export const nicheSpecialistIds = new Set([
   66, 91, 82, 80, 92, 113, 61, 65, 78, 38, 58, 107, 77, 89,
@@ -46,19 +44,34 @@ export function deriveMeta(
   rows: (Counts & { id: number; sideSample?: SideSample })[],
   patch: string,
   sampledAt: string,
-  metaBracket: MetaBracket = 'immortal_pub',
 ) {
-  const ranks = metaBracket === 'immortal_pub' ? ([7, 8] as const) : ([5, 6, 7] as const);
-  const total = (h: Counts, stat: 'pick' | 'win') =>
-    ranks.reduce<number>((n, rank) => n + h[`${rank}_${stat}`], 0);
-  const pubGames = rows.reduce((n, h) => n + total(h, 'pick'), 0) / 10;
+  const tiers = ladderRanks
+    .map((rank) => ({
+      rank,
+      games: rows.reduce((n, h) => n + h[`${rank}_pick`], 0) / 10,
+      weight: rankWeights[rank],
+    }))
+    .filter((tier) => tier.games > 0);
+  // 按全英雄统计判断整档是否有样本，唯一有样本的高分档承接整组权重。
+  const high = tiers.filter((tier) => tier.rank >= 7);
+  if (high.length === 1) high[0].weight = rankWeights[8] + rankWeights[7];
+  const totalWeight = tiers.reduce((sum, tier) => sum + tier.weight, 0);
   const proGames = rows.reduce((n, h) => n + h.pro_pick, 0) / 10;
   const result = rows
     .map((h) => {
-      const games = total(h, 'pick'),
-        wins = total(h, 'win');
-      const winrate = games ? round((100 * wins) / games) : null;
-      const popularity = pubGames ? (100 * games) / pubGames : 0;
+      let games = 0;
+      let weightedWinRate = 0;
+      let weightedPickRate = 0;
+      for (const tier of tiers) {
+        const picks = h[`${tier.rank}_pick`];
+        const wins = h[`${tier.rank}_win`];
+        games += picks;
+        // 英雄在有比赛的档位零登场时，该档胜率回到五成。
+        weightedWinRate += tier.weight * ((100 * (wins + 50)) / (picks + 100));
+        weightedPickRate += tier.weight * ((100 * picks) / tier.games);
+      }
+      const winrate = games ? weightedWinRate / totalWeight : null;
+      const popularity = totalWeight ? weightedPickRate / totalWeight : 0;
       const highGames = h['7_pick'] + h['8_pick'];
       const highMmrWinrate = highGames
         ? round((100 * (h['7_win'] + h['8_win'])) / highGames)
@@ -66,8 +79,7 @@ export function deriveMeta(
       const proContestedRate = proGames
         ? round(clamp((100 * (h.pro_pick + h.pro_ban)) / proGames))
         : 0;
-      // 胜率向五成收缩，避免新英雄的少量胜场压过稳定的大样本英雄。
-      const winSignal = clamp(50 + 6 * ((100 * (wins + 50)) / (games + 100) - 50));
+      const winSignal = clamp(50 + 6 * ((winrate ?? 50) - 50));
       const strength = games ? round(0.7 * winSignal + 0.3 * clamp(popularity * 5)) : 0;
       const sides = h.sideSample;
       const sideBias =
@@ -87,9 +99,8 @@ export function deriveMeta(
         patch,
         sampledAt,
         highMmrWinrate,
-        metaBracket,
         games,
-        baseWinrate: winrate,
+        baseWinrate: winrate === null ? null : round(winrate),
         pickRate: round(popularity),
         needsSpecialist: nicheSpecialistIds.has(h.id) || popularity < 2.5,
         proContestedRate,
