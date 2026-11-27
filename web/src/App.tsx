@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { AnimatePresence, MotionConfig, motion } from 'framer-motion';
+import { LiquidGlass } from './LiquidGlass';
+import { SegmentedControl, spring } from './MotionControls';
+import { seedDefaultTeams, slotsKey, teamKey, sides } from './draftModel';
+import { useDraftSession } from './useDraftSession';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import {
   Swords,
   Trophy,
   Shield,
   UsersRound,
   SlidersHorizontal,
-  PanelLeft,
-  ChevronRight,
   Radio,
-  Database,
   MapPinned,
   Check,
   CircleAlert,
@@ -17,7 +19,7 @@ import {
 import { api, failure, type Player, type Team, type Hero } from './api';
 import { Draft } from './Draft';
 import { Matches } from './Matches';
-import { Replays } from './Replays';
+const Replays = lazy(() => import('./Replays').then((module) => ({ default: module.Replays })));
 import { Players, Teams } from './Library';
 import { SettingsView } from './Settings';
 const pages = [
@@ -43,6 +45,8 @@ export function App() {
   const [online, setOnline] = useState<boolean | null>(null);
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
   const notify = useCallback((message: string, error = false) => setNotice({ message, error }), []);
+  const session = useDraftSession(notify);
+  const { setD } = session;
   const refresh = useCallback(async () => {
     const [p, t, h] = await Promise.all([
       api<Player[]>('/players'),
@@ -50,6 +54,28 @@ export function App() {
       api<Hero[]>('/heroes'),
       api('/health'),
     ]);
+    const ids = new Set(p.map((player) => player.id));
+    setD((room) => {
+      let next = room;
+      for (const side of sides) {
+        const slots = slotsKey(side),
+          team = teamKey(side);
+        if (room[team] && !t.some((entry) => entry.id === room[team]))
+          next = { ...next, [team]: null };
+        if (room[slots].some((id) => id !== null && !ids.has(id)))
+          next = { ...next, [slots]: room[slots].map((id) => (id && ids.has(id) ? id : null)) };
+      }
+      if (room.actions.some((a) => a.assignedPlayerId && !ids.has(a.assignedPlayerId)))
+        next = {
+          ...next,
+          actions: room.actions.map((a) =>
+            a.assignedPlayerId && !ids.has(a.assignedPlayerId)
+              ? { ...a, assignedPlayerId: null }
+              : a,
+          ),
+        };
+      return seedDefaultTeams(next, t);
+    });
     setPlayers(p);
     setTeams(t);
     setHeroes(h);
@@ -88,102 +114,98 @@ export function App() {
       return () => clearTimeout(timer);
     }
   }, [notice]);
-  const navLink = (p: (typeof pages)[number]) => (
-    <a
-      key={p.id}
-      href={'#' + p.id}
-      aria-current={page.id === p.id ? 'page' : undefined}
-      className={page.id === p.id ? 'active' : ''}
-    >
-      <p.icon size={19} />
-      <span className="long">{p.name}</span>
-      <span className="short">{p.short}</span>
-    </a>
+  const navigation = (
+    <SegmentedControl
+      label="主导航"
+      value={page.id}
+      options={pages.map((p) => ({
+        value: p.id,
+        href: '#' + p.id,
+        label: (
+          <>
+            <p.icon size={16} />
+            <span className="long">{p.name}</span>
+            <span className="short">{p.short}</span>
+          </>
+        ),
+      }))}
+    />
   );
   return (
-    <div className="app">
-      <aside className="sidebar">
-        <a href="#draft" className="brand">
-          <img src="/icon.svg" alt="" />
-          <div>
-            <b>
+    <MotionConfig reducedMotion="user">
+      <div className="app">
+        <div className="workspace">
+          <header className="site-bar">
+            <a className="site-brand" href="#draft">
+              <img src="/icon.svg" alt="" />
               BP<span>System</span>
-            </b>
-            <small>Dota 2 赛事 BP 助手</small>
-          </div>
-        </a>
-        <div className="nav-caption">赛事工作台</div>
-        <nav aria-label="主导航">{pages.map(navLink)}</nav>
-        <div className="side-foot">
-          <Database size={17} />
-          <div>
-            本地英雄库<small>{heroes.length} 名英雄</small>
-          </div>
+            </a>
+            <nav className="desktop-island">
+              <LiquidGlass>{navigation}</LiquidGlass>
+            </nav>
+            <button
+              className={'connection ' + (online ? 'on' : '')}
+              onClick={load}
+              title="重新检测服务连接"
+            >
+              <Radio size={15} />
+              {online === null ? '连接中' : online ? '服务在线' : '重新连接'}
+            </button>
+          </header>
+          <main>
+            <AnimatePresence mode="popLayout" initial={false}>
+              <motion.div
+                key={page.id}
+                initial={{ y: 4 }}
+                animate={{ y: 0 }}
+                exit={{ y: -4, opacity: 0 }}
+                transition={spring}
+              >
+                {page.id === 'draft' ? (
+                  <Draft
+                    session={session}
+                    players={players}
+                    teams={teams}
+                    heroes={heroes}
+                    notify={notify}
+                    ready={online === true}
+                  />
+                ) : page.id === 'matches' ? (
+                  <Matches heroes={heroes} refresh={refresh} notify={notify} />
+                ) : page.id === 'replays' ? (
+                  <Suspense fallback={<p role="status">正在打开录像分析…</p>}>
+                    <Replays
+                      key={page.params.toString()}
+                      initialParams={page.params}
+                      teams={teams}
+                    />
+                  </Suspense>
+                ) : page.id === 'players' ? (
+                  <Players players={players} refresh={refresh} notify={notify} />
+                ) : page.id === 'teams' ? (
+                  <Teams teams={teams} players={players} refresh={refresh} notify={notify} />
+                ) : (
+                  <SettingsView heroCount={heroes.length} refresh={refresh} notify={notify} />
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </main>
         </div>
-      </aside>
-      <div className="workspace">
-        <header className="topbar">
-          <div className="crumb">
-            <PanelLeft size={16} />
-            <span>赛事工作台</span>
-            <ChevronRight size={13} />
-            <strong>{page.name}</strong>
-          </div>
-          <div className="mobile-brand">
-            <img src="/icon.svg" alt="" />
-            BPSystem
-          </div>
-          <a
-            className="mobile-settings"
-            href="#settings"
-            aria-label="系统设置"
-            aria-current={page.id === 'settings' ? 'page' : undefined}
+        <nav className="mobile-island">
+          <LiquidGlass regular>{navigation}</LiquidGlass>
+        </nav>
+        {notice && (
+          <div
+            role={notice.error ? 'alert' : 'status'}
+            className={'toast ' + (notice.error ? 'error' : '')}
           >
-            <SlidersHorizontal size={18} />
-          </a>
-          <button
-            className={'connection ' + (online ? 'on' : '')}
-            onClick={load}
-            title="重新检测服务连接"
-          >
-            <Radio size={15} />
-            {online === null ? '连接中' : online ? '服务在线' : '重新连接'}
-          </button>
-        </header>
-        <main>
-          {page.id === 'draft' ? (
-            <Draft players={players} teams={teams} heroes={heroes} notify={notify} ready={online === true} />
-          ) : page.id === 'matches' ? (
-            <Matches heroes={heroes} refresh={refresh} notify={notify} />
-          ) : page.id === 'replays' ? (
-            <Replays
-              key={page.params.toString()}
-              initialParams={page.params}
-              teams={teams}
-            />
-          ) : page.id === 'players' ? (
-            <Players players={players} refresh={refresh} notify={notify} />
-          ) : page.id === 'teams' ? (
-            <Teams teams={teams} players={players} refresh={refresh} notify={notify} />
-          ) : (
-            <SettingsView heroCount={heroes.length} refresh={refresh} notify={notify} />
-          )}
-        </main>
+            {notice.error ? <CircleAlert size={18} /> : <Check size={18} />} {notice.message}
+            <button aria-label="关闭提示" onClick={() => setNotice(null)}>
+              <X size={15} />
+            </button>
+          </div>
+        )}
       </div>
-      <nav className="bottom-nav" aria-label="移动导航">
-        {pages.filter((p) => p.id !== 'settings').map(navLink)}
-      </nav>
-      {notice && (
-        <div
-          role={notice.error ? 'alert' : 'status'}
-          className={'toast ' + (notice.error ? 'error' : '')}
-        >
-          {notice.error ? <CircleAlert size={18} /> : <Check size={18} />} {notice.message}
-          <button aria-label="关闭提示" onClick={() => setNotice(null)}>
-            <X size={15} />
-          </button>
-        </div>
-      )}
-    </div>
+    </MotionConfig>
   );
 }

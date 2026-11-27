@@ -1,3 +1,5 @@
+import { SegmentedControl } from './MotionControls';
+import { LiquidGlass } from './LiquidGlass';
 import { useCallback, useEffect, useState } from 'react';
 import { Crosshair, Footprints, Layers, MapPinned, Search, UsersRound } from 'lucide-react';
 import { api, failure, type Team } from './api';
@@ -43,6 +45,9 @@ function Select({
   options: [string, string][];
   set: (value: string) => void;
 }) {
+  if (['阵营','眼位类型','比赛时段','位置范围'].includes(label))
+    return <div className="replay-filter-choice"><span>{label}</span><SegmentedControl label={label} value={value}
+      options={options.map(([value,label]) => ({value,label}))} onChange={set} /></div>;
   return (
     <label>
       {label}
@@ -295,16 +300,8 @@ function HeatmapPanel({
   const heroes = new Map(records.map((r) => [String(r.heroId), r.heroCnName]));
   return (
     <>
-      <div className="replay-tabs" aria-label="分析模式">
-        <button aria-pressed={mode === 'wards'} onClick={() => setMode('wards')}>
-          <Crosshair />
-          眼位热力图
-        </button>
-        <button aria-pressed={mode === 'farming'} onClick={() => setMode('farming')}>
-          <Footprints />
-          刷钱热力图
-        </button>
-      </div>
+      <SegmentedControl<Mode> className="replay-modes" label="分析模式" value={mode} onChange={setMode}
+        options={[{value:'wards',label:<><Crosshair size={16}/>眼位热力图</>},{value:'farming',label:<><Footprints size={16}/>刷钱热力图</>}]} />
       <section className="panel replay-filters" aria-label="热图筛选">
         <Select
           label="阵营"
@@ -542,7 +539,7 @@ export function Replays({
                 <UsersRound />
                 选择选手
               </h2>
-              <label className="replay-search">
+              <LiquidGlass className="replay-search">
                 <Search size={15} />
                 <input
                   type="search"
@@ -554,7 +551,7 @@ export function Replays({
                     openPlayer(null);
                   }}
                 />
-              </label>
+              </LiquidGlass>
             </header>
             <div className="replay-team-bar" aria-label="按战队筛选">
               {[{ id: null, name: '全部选手' }, ...teams].map((t) => (

@@ -1,3 +1,4 @@
+import { LiquidGlass } from './LiquidGlass';
 import { useState, type FormEvent } from 'react';
 import { Pencil, Plus, Save, Search, Shield, Trash2, UserRound, UsersRound, X } from 'lucide-react';
 import { api, failure, positions, type Notify, type Player, type Team } from './api';
@@ -154,7 +155,7 @@ export function Players({ players, ...common }: Common & { players: Player[] }) 
           <span className="muted">{players.length} 名选手</span>
         </div>
         <div className="filters">
-          <div className="search">
+          <LiquidGlass className="search">
             <Search size={16} />
             <input
               aria-label="搜索选手"
@@ -162,7 +163,7 @@ export function Players({ players, ...common }: Common & { players: Player[] }) 
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-          </div>
+          </LiquidGlass>
           <select aria-label="筛选位置" value={role} onChange={(e) => setRole(+e.target.value)}>
             <option value="0">全部位置</option>
             {positions.map((v, i) => (

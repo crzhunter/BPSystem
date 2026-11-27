@@ -1,3 +1,5 @@
+import { LiquidGlass } from './LiquidGlass';
+import { Reveal } from './MotionControls';
 import { useEffect, useState } from 'react';
 import { Trophy, Download, List } from 'lucide-react';
 import { api, failure, type Hero, type Notify } from './api';
@@ -332,11 +334,11 @@ export function Matches({ heroes, refresh, notify }: Common) {
         <div className="form-grid">
           <label>
             搜索比赛
-            <input
+            <LiquidGlass className="match-search"><input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="比赛 ID、队名或选手"
-            />
+            /></LiquidGlass>
           </label>
           <label>
             筛选赛事标签
@@ -397,7 +399,7 @@ export function Matches({ heroes, refresh, notify }: Common) {
                 删除比赛
               </button>
             </div>
-            {open === m.matchId && (
+            <Reveal open={open === m.matchId}>
               <MatchDetail
                 id={m.matchId}
                 revision={revision}
@@ -406,7 +408,7 @@ export function Matches({ heroes, refresh, notify }: Common) {
                 notify={notify}
                 changed={changed}
               />
-            )}
+            </Reveal>
           </article>
         ))}
         {!matches.length && !error && (

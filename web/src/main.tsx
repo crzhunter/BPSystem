@@ -3,6 +3,7 @@ import { App } from './App';
 import './styles.css';
 import './responsive.css';
 import './draft.css';
+import './liquid.css';
 createRoot(document.getElementById('root')!).render(<App />);
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   const workers = navigator.serviceWorker;

@@ -1,4 +1,13 @@
-import { useState, type ReactNode } from 'react';
+import { motion } from 'framer-motion';
+import { SegmentedControl, Reveal, spring } from './MotionControls';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
 import { Crosshair, Trophy } from 'lucide-react';
 import { type Advice } from './draftModel';
 import { Portrait } from './HeroPoolGrid';
@@ -25,6 +34,26 @@ export function RecommendationPanel({
   setPreference: (value: RolePreference) => void;
   planAction?: 'pick' | 'ban';
 }) {
+  const [expanded, setExpanded] = useState<number[]>([]);
+  const reflectionFrame = useRef(0);
+  const pointer = useRef<{ card: HTMLElement; x: number; y: number } | null>(null);
+  useEffect(() => () => cancelAnimationFrame(reflectionFrame.current), []);
+  function reflect(event: PointerEvent<HTMLElement>) {
+    pointer.current = { card: event.currentTarget, x: event.clientX, y: event.clientY };
+    if (reflectionFrame.current) return;
+    // 仅普通推荐卡追踪指针，每帧使用最后一个坐标，避免使玻璃采样面失效。
+    reflectionFrame.current = requestAnimationFrame(() => {
+      reflectionFrame.current = 0;
+      const { card, x, y } = pointer.current!;
+      const rect = card.getBoundingClientRect();
+      const px = x - rect.left,
+        py = y - rect.top;
+      const angle = Math.atan2(py - rect.height / 2, px - rect.width / 2);
+      card.style.setProperty('--px', px + 'px');
+      card.style.setProperty('--py', py + 'px');
+      card.style.setProperty('--spec-angle', Math.round((angle * 180) / Math.PI + 90) + 'deg');
+    });
+  }
   const active = data.currentStep.actionType;
   const [choice, setChoice] = useState<{ turn: string; tab: Tab }>();
   const tab =
@@ -46,9 +75,7 @@ export function RecommendationPanel({
                 ? '我方下一手预案'
                 : '我方禁选已结束'}
         </h2>
-        <small>
-          {data.patch} 天梯加权综合（高分主导）
-        </small>
+        <small>{data.patch} 天梯加权综合（高分主导）</small>
       </div>
       <fieldset className="position-choice">
         <legend>优先位置</legend>
@@ -58,23 +85,23 @@ export function RecommendationPanel({
             [1, 2, 3, 4, 5],
           ] as const
         ).map((group) => (
-          <div className="role-chips" key={group[0]}>
-            {group.map((value) => (
-              <button
-                key={value}
-                aria-pressed={preference === value}
-                onClick={() => setPreference(value)}
-              >
-                {value === 'auto'
+          <SegmentedControl<RolePreference>
+            key={group[0]}
+            label="优先位置"
+            value={preference}
+            onChange={setPreference}
+            options={group.map((value) => ({
+              value,
+              label:
+                value === 'auto'
                   ? '随手数'
                   : value === 'core'
                     ? '核心'
                     : value === 'support'
                       ? '辅助'
-                      : value}
-              </button>
-            ))}
-          </div>
+                      : value,
+            }))}
+          />
         ))}
         {tab !== 'scout' && (
           <p aria-live="polite">
@@ -84,20 +111,31 @@ export function RecommendationPanel({
           </p>
         )}
       </fieldset>
-      <div className="rec-tabs">
-        {(['pick', 'ban', ...(scouting ? ['scout'] : [])] as Tab[]).map((k) => (
-          <button key={k} aria-pressed={tab === k} onClick={() => setChoice({ turn, tab: k })}>
-            {titles[k]}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl<Tab>
+        className="rec-tabs"
+        label="推荐类型"
+        value={tab}
+        onChange={(tab) => setChoice({ turn, tab })}
+        options={(['pick', 'ban', ...(scouting ? ['scout'] : [])] as Tab[]).map((value) => ({
+          value,
+          label: titles[value],
+        }))}
+      />
       {tab === 'scout' ? (
         scouting
       ) : (
         <>
           <div className="deep-cards">
             {rows.slice(0, 3).map((r, i) => (
-              <article
+              <motion.article
+                layout="position"
+                layoutId={'recommend-' + r.heroId}
+                style={{ '--hero-art': `url("/portraits/${r.heroId}.webp")` } as CSSProperties}
+                transition={spring}
+                onPointerMove={reflect}
+                onClick={(e) => {
+                  if (!(e.target as HTMLElement).closest('button,.card-detail')) select(r.heroId);
+                }}
                 key={r.heroId}
                 className={'decision rank-' + (i + 1) + (pending === r.heroId ? ' selected' : '')}
               >
@@ -143,55 +181,71 @@ export function RecommendationPanel({
                     <li key={tip}>{tip}</li>
                   ))}
                 </ul>
-                <details className="card-detail">
-                  <summary>展开详细拆解</summary>
-                  <dl>
-                    <dt>天梯战绩</dt>
-                    <dd
-                      title={
-                        r.metaSummary.sampledAt.slice(0, 10) +
-                        ' · 天梯合计 ' +
-                        r.metaSummary.games +
-                        ' 次选取'
-                      }
-                    >
-                      {r.metaSummary.text} · 选了 {r.metaSummary.games.toLocaleString()} 场
-                      {r.metaSummary.sideText && <p>{r.metaSummary.sideText}</p>}
-                    </dd>
-                    <dt>{tab === 'ban' ? '禁用动机' : '阵容补足'}</dt>
-                    <dd>
-                      {tab === 'ban' ? (
+                <div className="card-detail">
+                  <button
+                    aria-expanded={expanded.includes(r.heroId)}
+                    onClick={() =>
+                      setExpanded((ids) =>
+                        ids.includes(r.heroId)
+                          ? ids.filter((id) => id !== r.heroId)
+                          : [...ids, r.heroId],
+                      )
+                    }
+                  >
+                    {expanded.includes(r.heroId) ? '收起拆解' : '展开详细拆解'}
+                  </button>
+                  <Reveal open={expanded.includes(r.heroId)}>
+                    <dl>
+                      <dt>天梯战绩</dt>
+                      <dd
+                        title={
+                          r.metaSummary.sampledAt.slice(0, 10) +
+                          ' · 天梯合计 ' +
+                          r.metaSummary.games +
+                          ' 次选取'
+                        }
+                      >
+                        {r.metaSummary.text} · 选了 {r.metaSummary.games.toLocaleString()} 场
+                        {r.metaSummary.sideText && <p>{r.metaSummary.sideText}</p>}
+                      </dd>
+                      <dt>{tab === 'ban' ? '禁用动机' : '阵容补足'}</dt>
+                      <dd>
+                        {tab === 'ban' ? (
+                          <>
+                            <b className="ban-kind">{r.shortTags[0]}</b>
+                            {r.whyBan}
+                          </>
+                        ) : (
+                          r.compositionFit.text
+                        )}
+                      </dd>
+                      <dt>克制与协同</dt>
+                      <dd>
+                        {r.matchupDetails.length
+                          ? r.matchupDetails.map((n) => <p key={n.kind + n.vsHeroId}>{n.text}</p>)
+                          : data.composition.our.assignments.length +
+                              data.composition.enemy.assignments.length
+                            ? '当前对阵暂无已知配合或克制记录。'
+                            : '双方尚未亮出英雄，优先参考版本强度与摇摆空间。'}
+                      </dd>
+                      {r.playerFit && (
                         <>
-                          <b className="ban-kind">{r.shortTags[0]}</b>
-                          {r.whyBan}
+                          <dt>选手英雄池</dt>
+                          <dd>{r.playerFit.text}</dd>
                         </>
-                      ) : (
-                        r.compositionFit.text
                       )}
-                    </dd>
-                    <dt>克制与协同</dt>
-                    <dd>
-                      {r.matchupDetails.length
-                        ? r.matchupDetails.map((n) => <p key={n.kind + n.vsHeroId}>{n.text}</p>)
-                        : data.composition.our.assignments.length +
-                            data.composition.enemy.assignments.length
-                          ? '当前对阵暂无已知配合或克制记录。'
-                          : '双方尚未亮出英雄，优先参考版本强度与摇摆空间。'}
-                    </dd>
-                    {r.playerFit && (
-                      <>
-                        <dt>选手英雄池</dt>
-                        <dd>{r.playerFit.text}</dd>
-                      </>
-                    )}
-                  </dl>
-                </details>
-              </article>
+                    </dl>
+                  </Reveal>
+                </div>
+              </motion.article>
             ))}
           </div>
           <div className="rec-compact">
             {rows.slice(3).map((r, i) => (
-              <button
+              <motion.button
+                layout="position"
+                layoutId={'recommend-' + r.heroId}
+                transition={spring}
                 key={r.heroId}
                 aria-pressed={pending === r.heroId}
                 onClick={() => select(r.heroId)}
@@ -205,7 +259,7 @@ export function RecommendationPanel({
                 )}
                 <span>{r.roleLabel}</span>
                 <strong>{r.score.toFixed(1)}</strong>
-              </button>
+              </motion.button>
             ))}
           </div>
           {!rows.length && (

@@ -1,3 +1,4 @@
+import { Reveal } from './MotionControls';
 import { useEffect, useState } from 'react';
 import { api, failure, type Notify, type Player } from './api';
 
@@ -86,7 +87,7 @@ export function PlayerAnalysis({ player }: { player: Player }) {
         {open ? '收起' : '查看'}
         {player.nickname}的战绩
       </button>
-      {open && <ProfileCard player={player} />}
+      <Reveal open={open}><ProfileCard player={player} /></Reveal>
     </div>
   );
 }

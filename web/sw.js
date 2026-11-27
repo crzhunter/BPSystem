@@ -1,7 +1,7 @@
 // 保留旧版共用的前缀，激活时一并清理升级前的离线缓存。
 const prefix = 'bpsystem-shell-';
 // 构建时注入当前版本的入口、带哈希的脚本和样式，覆盖首次安装后直接离线的情况。
-const cacheName = prefix + 'v2-__BUILD_ID__';
+const cacheName = prefix + 'v7-__BUILD_ID__';
 const shell = /*__SHELL_FILES__*/ [];
 const immutableAssets = new Set(shell.filter((path) => path.startsWith('/assets/')));
 self.addEventListener('install', (event) => {

@@ -1,3 +1,6 @@
+import { useState, type CSSProperties } from 'react';
+import { AnimatePresence } from 'framer-motion';
+import { Popover, Reveal } from './MotionControls';
 import { Shield, Swords, Ban, Sprout, Flame, Flag } from 'lucide-react';
 import {
   cmOrder,
@@ -5,17 +8,19 @@ import {
   sideNames,
   sides,
   slotsKey,
+  teamKey,
   type Room,
   type Action,
   type Advice,
 } from './draftModel';
-import type { Hero, Player } from './api';
+import type { Hero, Player, Team } from './api';
 import { Portrait } from './HeroPoolGrid';
 
 export function DraftHud({
   d,
   heroes,
   players,
+  teams,
   assign,
   replace,
   replacing,
@@ -24,11 +29,14 @@ export function DraftHud({
   d: Room;
   heroes: Hero[];
   players: Player[];
+  teams: Team[];
   assign: (i: number, a: Action) => void;
   replace: (i: number) => void;
   replacing: number | null;
   advice?: Advice;
 }) {
+  const [open, setOpen] = useState<{ i: number; x: number; y: number }>();
+  const [lanes, setLanes] = useState(false);
   const order = cmOrder(d.firstPickSide, d.cmOrderVersion),
     step = currentStep(d.firstPickSide, d.ourSide, d.actions.length, d.cmOrderVersion);
   const byId = new Map(heroes.map((h) => [h.id, h]));
@@ -46,7 +54,10 @@ export function DraftHud({
             <section className={'faction ' + s} key={s} aria-label={sideNames[s] + '禁选'}>
               <header>
                 <Icon size={24} />
-                <h2>{sideNames[s]}</h2>
+                <h2>
+                  {sideNames[s]}{' '}
+                  <strong>{teams.find((team) => team.id === d[teamKey(s)])?.name}</strong>
+                </h2>
                 <b>{s === d.ourSide ? '我方' : '对方'}</b>
                 <small>
                   <Flag size={12} />
@@ -56,7 +67,7 @@ export function DraftHud({
               <div className="pick-hand">
                 {team
                   .filter((t) => t.actionType === 'pick')
-                  .map((t) => {
+                  .map((t, slot) => {
                     const i = t.step - 1,
                       a = d.actions[i],
                       h = byId.get(a?.heroId);
@@ -88,67 +99,104 @@ export function DraftHud({
                           onClick={() => replace(i)}
                         >
                           {h ? <Portrait hero={h} /> : <Shield size={23} />}
-                          <small>第 {t.step} 手</small>
-                          <b>{h?.cnName ?? '待选'}</b>
+                          <small>{h ? `第 ${t.step} 手` : `${slot + 1}号位`}</small>
+                          <b>
+                            {h?.cnName ??
+                              players.find((p) => p.id === slots[slot])?.nickname ??
+                              '待分配'}
+                          </b>
                         </button>
                         {a && (
-                          <div className="bind-slot">
-                            <select
-                              aria-label={sideNames[s] + h?.cnName + '位置'}
-                              value={a.roleHint ?? 0}
-                              onChange={(e) =>
-                                assign(i, { ...a, roleHint: +e.target.value || null })
-                              }
+                          <>
+                            <button
+                              className="assign-trigger"
+                              aria-expanded={open?.i === i}
+                              onClick={(e) => {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setOpen({
+                                  i,
+                                  x: Math.max(8, Math.min(innerWidth - 280, rect.left)),
+                                  y: Math.min(innerHeight - 225, rect.bottom + 3),
+                                });
+                              }}
                             >
-                              <option
-                                value={0}
-                                disabled={
-                                  !!a.assignedPlayerId &&
-                                  occupied.includes(slots.indexOf(a.assignedPlayerId) + 1)
-                                }
-                              >
-                                自动位置
-                              </option>
-                              {[1, 2, 3, 4, 5].map((r) => (
-                                <option key={r} value={r} disabled={occupied.includes(r)}>
-                                  {r} 号位
-                                </option>
-                              ))}
-                            </select>
-                            {slots.some(Boolean) && (
-                              <select
-                                aria-label={sideNames[s] + h?.cnName + '选手'}
-                                value={a.assignedPlayerId ?? 0}
-                                onChange={(e) =>
-                                  assign(i, { ...a, assignedPlayerId: +e.target.value || null })
-                                }
-                              >
-                                <option value={0}>待分配</option>
-                                {slots.map(
-                                  (id, j) =>
-                                    id && (
-                                      <option
-                                        key={id}
-                                        value={id}
-                                        disabled={
-                                          others.some((x) => x.assignedPlayerId === id) ||
-                                          (!a.roleHint && occupied.includes(j + 1))
-                                        }
+                              {roleOf(a) || '自动'}
+                              {roleOf(a) ? '号位' : ''} ·{' '}
+                              {players.find((p) => p.id === a.assignedPlayerId)?.nickname ??
+                                '分配选手'}
+                            </button>
+                            <AnimatePresence>
+                              {open?.i === i && (
+                                <div
+                                  style={
+                                    {
+                                      '--slot-x': open.x + 'px',
+                                      '--slot-y': open.y + 'px',
+                                    } as CSSProperties
+                                  }
+                                >
+                                  <Popover
+                                    label="位置与选手"
+                                    className="slot-overlay"
+                                    close={() => setOpen(undefined)}
+                                  >
+                                    <h3>分配位置</h3>
+                                    <div className="assignment-options">
+                                      {[0, 1, 2, 3, 4, 5].map((r) => (
+                                        <button
+                                          key={r}
+                                          disabled={occupied.includes(
+                                            r ||
+                                              (a.assignedPlayerId
+                                                ? slots.indexOf(a.assignedPlayerId) + 1
+                                                : -1),
+                                          )}
+                                          aria-pressed={(a.roleHint ?? 0) === r}
+                                          onClick={() => {
+                                            assign(i, { ...a, roleHint: r || null });
+                                            setOpen(undefined);
+                                          }}
+                                        >
+                                          {r ? r + '号位' : '自动'}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    <h3>分配选手</h3>
+                                    <div className="assignment-options">
+                                      {[
+                                        null,
+                                        ...slots.filter((id): id is number => id !== null),
+                                      ].map((id) => (
+                                        <button
+                                          key={id ?? 0}
+                                          disabled={
+                                            !!id &&
+                                            (others.some((x) => x.assignedPlayerId === id) ||
+                                              (!a.roleHint &&
+                                                occupied.includes(slots.indexOf(id) + 1)))
+                                          }
+                                          aria-pressed={a.assignedPlayerId === id}
+                                          onClick={() => {
+                                            assign(i, { ...a, assignedPlayerId: id });
+                                            setOpen(undefined);
+                                          }}
+                                        >
+                                          {players.find((p) => p.id === id)?.nickname ?? '待分配'}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    {a.assignedPlayerId && (
+                                      <a
+                                        href={`#replays?mode=wards&playerId=${a.assignedPlayerId}&side=${s}`}
                                       >
-                                        {players.find((p) => p.id === id)?.nickname}
-                                      </option>
-                                    ),
-                                )}
-                              </select>
-                            )}
-                            {a.assignedPlayerId && (
-                              <a
-                                href={`#replays?mode=wards&playerId=${a.assignedPlayerId}&side=${s}`}
-                              >
-                                查看录像
-                              </a>
-                            )}
-                          </div>
+                                        查看录像
+                                      </a>
+                                    )}
+                                  </Popover>
+                                </div>
+                              )}
+                            </AnimatePresence>
+                          </>
                         )}
                       </div>
                     );
@@ -225,45 +273,59 @@ export function DraftHud({
             <b>夜魇 {advantage.direWinProb.toFixed(1)}%</b>
             <span>{advantage.summary}</span>
           </div>
-          <details className="balance-details">
-            <summary>看分路</summary>
-            <div className="adv-components">
-              <span>天辉分差</span>
-              {(
-                [
-                  ['metaEdge', '版本'],
-                  ['matchupEdge', '对位'],
-                  ['compositionEdge', '阵容'],
-                  ['sideEdge', '阵营'],
-                ] as const
-              ).map(([key, label]) => (
-                <span key={key}>
-                  {label} {advantage[key] > 0 ? '+' : ''}
-                  {advantage[key].toFixed(1)}
-                </span>
-              ))}
-            </div>
-            {!!advice?.laneForecast.length && (
-              <div className="lane-forecast">
-                {advice.laneForecast.map((l) => (
-                  <div key={l.label}>
-                    <small>
-                      {l.label} · {l.location}
-                    </small>
-                    <b>{l.verdict}</b>
-                    <span>
-                      {l.ourHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'} 对{' '}
-                      {l.enemyHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'}
-                    </span>
-                    {l.partial && <small>分路待定</small>}
-                  </div>
+          <div className="balance-details">
+            <button className="lane-toggle" aria-expanded={lanes} onClick={() => setLanes(!lanes)}>
+              看分路
+            </button>
+            <Reveal open={lanes}>
+              <div className="adv-components">
+                <span>天辉分差</span>
+                {(
+                  [
+                    ['metaEdge', '版本'],
+                    ['matchupEdge', '对位'],
+                    ['compositionEdge', '阵容'],
+                    ['sideEdge', '阵营'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <span key={key}>
+                    {label} {advantage[key] > 0 ? '+' : ''}
+                    {advantage[key].toFixed(1)}
+                  </span>
                 ))}
               </div>
-            )}
-          </details>
+              {!!advice?.laneForecast.length && (
+                <div className="lane-forecast">
+                  {advice.laneForecast.map((l) => (
+                    <div key={l.label}>
+                      <small>
+                        {l.label} · {l.location}
+                      </small>
+                      <b>{l.verdict}</b>
+                      <span>
+                        {l.ourHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'} 对{' '}
+                        {l.enemyHeroes.map((id) => byId.get(id)?.cnName).join('、') || '待亮'}
+                      </span>
+                      {l.partial && <small>分路待定</small>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Reveal>
+          </div>
         </section>
-      ) : <div className="bp-balance bp-box"><div className="balance-strip" role="status">正在看双方阵容…</div></div>}
-      <div className="hud-track bp-box" role="group" aria-label={'禁选进度，第 ' + step.phase + ' 阶段，已走 ' + d.actions.length + ' 手'}>
+      ) : (
+        <div className="bp-balance bp-box">
+          <div className="balance-strip" role="status">
+            正在看双方阵容…
+          </div>
+        </div>
+      )}
+      <div
+        className="hud-track bp-box"
+        role="group"
+        aria-label={'禁选进度，第 ' + step.phase + ' 阶段，已走 ' + d.actions.length + ' 手'}
+      >
         <div className="track-head">
           <b>禁选进度</b>
           <span>

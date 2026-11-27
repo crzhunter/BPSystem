@@ -35,11 +35,12 @@ export type Settings = {
   pubRecentDays: number;
 };
 export type Network = { port: number; hostname: string; lanUrls: string[] };
-export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
     response = await fetch('/api' + path, {
       method,
+      signal,
       headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });

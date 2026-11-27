@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { Reveal } from './MotionControls';
 import { Flag, Flame, Sprout, ScanLine } from 'lucide-react';
 import { type Team, type Player, positions } from './api';
 import { SlotIntel } from './Analytics';
@@ -29,6 +31,7 @@ export function Roster({
   heroName: Names;
   update: (side: Side, team: number | null, slots: (number | null)[]) => void;
 }) {
+  const [intel, setIntel] = useState(false);
   const slots = d[slotsKey(side)],
     order = cmOrder(d.firstPickSide, d.cmOrderVersion);
   const Icon = side === 'radiant' ? Sprout : Flame;
@@ -124,29 +127,43 @@ export function Roster({
             </label>
             {assignedHero(playerId, i + 1)}
             {playerId && (
-              <a className="subtle-button" href={`#replays?mode=wards&playerId=${playerId}&side=${side}`}>
+              <a
+                className="subtle-button"
+                href={`#replays?mode=wards&playerId=${playerId}&side=${side}`}
+              >
                 查看选手录像
               </a>
             )}
-            {playerId && <SlotIntel id={playerId} side={side} revision={revision} />}
+            {playerId && (
+              <Reveal open={intel}>
+                <SlotIntel id={playerId} side={side} revision={revision} />
+              </Reveal>
+            )}
           </div>
         ))}
-        {(['pick', 'ban'] as const).map((type) => {
-          const actions = d.actions.filter(
-            (_, i) => order[i].side === side && order[i].actionType === type,
-          );
-          return (
-            <div className="side-history" key={type}>
-              <b>
-                {type === 'pick' ? '已选' : '已禁'}{' '}
-                <small>
-                  {actions.length}/{type === 'pick' ? 5 : 7}
-                </small>
-              </b>
-              <span>{actions.map((a) => heroName(a.heroId)).join('、') || '—'}</span>
-            </div>
-          );
-        })}
+        {slots.some(Boolean) && (
+          <button className="roster-intel" aria-expanded={intel} onClick={() => setIntel(!intel)}>
+            {intel ? '收起首发战绩' : '查看首发战绩'}
+          </button>
+        )}
+        <div className="roster-history">
+          {(['pick', 'ban'] as const).map((type) => {
+            const actions = d.actions.filter(
+              (_, i) => order[i].side === side && order[i].actionType === type,
+            );
+            return (
+              <div className="side-history" key={type}>
+                <b>
+                  {type === 'pick' ? '已选' : '已禁'}{' '}
+                  <small>
+                    {actions.length}/{type === 'pick' ? 5 : 7}
+                  </small>
+                </b>
+                <span>{actions.map((a) => heroName(a.heroId)).join('、') || '—'}</span>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </section>
   );

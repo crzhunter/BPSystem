@@ -1,3 +1,4 @@
+import { SegmentedControl } from './MotionControls';
 import { useState } from 'react';
 import { Activity } from 'lucide-react';
 import { type Advice, type Side, sideNames } from './draftModel';
@@ -40,13 +41,17 @@ export function CompositionMeter({
           <Activity />
           阵容诊断
         </h2>
-        <div className="role-chips">
-          {(['our', 'enemy'] as const).map((v) => (
-            <button key={v} onClick={() => setView(v)} aria-pressed={key === v}>
-              {v === 'our' ? '我方补强' : '敌方破阵'}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="阵容诊断"
+          value={view}
+          onChange={setView}
+          options={
+            [
+              { value: 'our', label: '我方补强' },
+              { value: 'enemy', label: '敌方破阵' },
+            ] as const
+          }
+        />
       </div>
       <div className="coverage-line">
         <span>位置覆盖</span>

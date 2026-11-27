@@ -1,4 +1,6 @@
-import { useMemo, useState, type RefObject } from 'react';
+import { SegmentedControl } from './MotionControls';
+import { LiquidGlass } from './LiquidGlass';
+import { memo, useMemo, useState, type MouseEvent, type RefObject } from 'react';
 import { Search, Dumbbell, Feather, Sparkles, Orbit, Check } from 'lucide-react';
 import type { Hero } from './api';
 import { cmOrder, sideNames, type Room } from './draftModel';
@@ -44,6 +46,48 @@ function pinyin(name: string) {
     })
     .join('');
 }
+// 事件从英雄池容器委托；下一手只需更新锁定状态发生变化的格子。
+const HeroTile = memo(function HeroTile({
+  h,
+  status,
+  match,
+  filtering,
+  selected,
+  disabled,
+}: {
+  h: Hero;
+  status?: 'ban' | 'radiant' | 'dire';
+  match: boolean;
+  filtering: boolean;
+  selected: boolean;
+  disabled: boolean;
+}) {
+  const label = status === 'ban' ? '已禁' : status ? sideNames[status] : '';
+  return (
+    <button
+      data-hero={h.id}
+      title={h.cnName + ' · ' + h.typicalRoles.join('/') + ' 号位'}
+      aria-label={h.cnName + (label ? ' · ' + label : '')}
+      className={[
+        'pool-tile',
+        status === 'ban' ? 'banned' : '',
+        !match ? 'dimmed' : filtering ? 'matched' : '',
+        selected ? 'selected' : '',
+      ].join(' ')}
+      disabled={disabled}
+      aria-pressed={selected}
+    >
+      <Portrait hero={h} />
+      <span className="tile-name">
+        {h.cnName.length > 4
+          ? (h.aliases.find((a) => a.length <= 4 && /[\u3400-\u9fff]/.test(a)) ?? h.cnName)
+          : h.cnName}
+      </span>
+      {status && <b className={'taken ' + status}>{label}</b>}
+      {selected && <Check size={13} className="tile-check" />}
+    </button>
+  );
+});
 export function HeroPoolGrid({
   heroes,
   d,
@@ -101,6 +145,10 @@ export function HeroPoolGrid({
     (n, g) => n + g.list.filter(({ h, terms }) => matches(h, terms)).length,
     0,
   );
+  function choose(event: MouseEvent<HTMLDivElement>, handler: (id: number) => void) {
+    const button = (event.target as Element).closest<HTMLButtonElement>('button[data-hero]');
+    if (button && !button.disabled) handler(Number(button.dataset.hero));
+  }
   const jump = (key: string) =>
     document.getElementById('pool-' + key)?.scrollIntoView({ block: 'start' });
   return (
@@ -116,7 +164,7 @@ export function HeroPoolGrid({
         </small>
       </div>
       <div className="pool-filters">
-        <label className="pool-search">
+        <LiquidGlass className="pool-search">
           <Search size={15} />
           <input
             ref={search}
@@ -136,15 +184,26 @@ export function HeroPoolGrid({
               }
             }}
           />
-          <kbd>/</kbd>
-        </label>
-        <div className="role-chips" aria-label="位置筛选">
-          {[0, 1, 2, 3, 4, 5].map((r) => (
-            <button key={r} aria-pressed={r === role} onClick={() => setRole(r)}>
-              {r ? r + '号位' : '全部'}
+          {query ? (
+            <button
+              aria-label="清空搜索"
+              onClick={() => {
+                setQuery('');
+                search.current?.focus();
+              }}
+            >
+              ×
             </button>
-          ))}
-        </div>
+          ) : (
+            <kbd>/</kbd>
+          )}
+        </LiquidGlass>
+        <SegmentedControl
+          label="位置筛选"
+          value={role}
+          onChange={setRole}
+          options={[0, 1, 2, 3, 4, 5].map((r) => ({ value: r, label: r ? r + '号位' : '全部' }))}
+        />
       </div>
       <div className="attr-jumps">
         {groups.map((g) => (
@@ -154,7 +213,11 @@ export function HeroPoolGrid({
           </button>
         ))}
       </div>
-      <div className="pool-quads">
+      <div
+        className="pool-quads"
+        onClick={(e) => choose(e, select)}
+        onDoubleClick={(e) => choose(e, lock)}
+      >
         {sections.map((g) => (
           <section id={'pool-' + g.key} key={g.key} className={'attr-group attr-' + g.key}>
             <h3>
@@ -167,42 +230,16 @@ export function HeroPoolGrid({
                 const taken = used.get(h.id),
                   match = matches(h, terms),
                   selected = pending === h.id;
-                const label = taken
-                  ? taken.actionType === 'ban'
-                    ? '已禁'
-                    : sideNames[taken.side]
-                  : '';
                 return (
-                  <button
+                  <HeroTile
                     key={h.id}
-                    data-hero={h.id}
-                    title={h.cnName + ' · ' + h.typicalRoles.join('/') + ' 号位'}
-                    aria-label={h.cnName + (label ? ' · ' + label : '')}
-                    className={[
-                      'pool-tile',
-                      taken?.actionType === 'ban' ? 'banned' : '',
-                      !match ? 'dimmed' : filtering ? 'matched' : '',
-                      selected ? 'selected' : '',
-                    ].join(' ')}
+                    h={h}
+                    status={taken?.actionType === 'ban' ? 'ban' : taken?.side}
+                    match={match}
+                    filtering={filtering}
+                    selected={selected}
                     disabled={!!taken || (!replacing && d.actions.length === 24)}
-                    aria-pressed={selected}
-                    onClick={() => select(h.id)}
-                    onDoubleClick={() => lock(h.id)}
-                  >
-                    <Portrait hero={h} />
-                    <span className="tile-name">
-                      {h.cnName.length > 4
-                        ? (h.aliases.find((a) => a.length <= 4 && /[\u3400-\u9fff]/.test(a)) ??
-                          h.cnName)
-                        : h.cnName}
-                    </span>
-                    {taken && (
-                      <b className={'taken ' + (taken.actionType === 'ban' ? 'ban' : taken.side)}>
-                        {label}
-                      </b>
-                    )}
-                    {selected && <Check size={13} className="tile-check" />}
-                  </button>
+                  />
                 );
               })}
             </div>
