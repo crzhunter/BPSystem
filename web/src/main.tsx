@@ -4,6 +4,7 @@ import './styles.css';
 import './responsive.css';
 import './draft.css';
 import './liquid.css';
+import './studio.css';
 createRoot(document.getElementById('root')!).render(<App />);
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   const workers = navigator.serviceWorker;

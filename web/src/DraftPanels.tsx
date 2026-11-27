@@ -120,7 +120,7 @@ export function Roster({
                     disabled={p.id !== playerId && occupied.includes(p.id)}
                     value={p.id}
                   >
-                    {p.nickname}
+                    {p.alias || p.nickname}
                   </option>
                 ))}
               </select>

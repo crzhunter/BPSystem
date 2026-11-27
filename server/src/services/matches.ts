@@ -1,4 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { replayScope } from './replayScope.ts';
+import { extractMatchIds } from '../utils/matchIds.ts';
 import { listItems } from '../data/catalog.ts';
 import { transaction } from '../db/index.ts';
 import { HttpError, check } from '../utils/input.ts';
@@ -18,6 +20,8 @@ export function matchIds(input: unknown) {
   const entries = Array.isArray(input) ? input : [input];
   const tokens = entries.flatMap((entry) => {
     check(typeof entry === 'string' || typeof entry === 'number', '请输入比赛 ID 或比赛链接');
+    const extracted = extractMatchIds(String(entry));
+    if (extracted.length) return extracted.map(String);
     return String(entry)
       .trim()
       .split(/[\s,，;；]+/)
@@ -28,7 +32,7 @@ export function matchIds(input: unknown) {
     ...new Set(
       tokens.map((token) => {
         const link = token.match(
-          /^(?:https?:\/\/)?(?:(?:www|cn|zh)\.)?(?:opendota|dotabuff)\.com\/matches\/(\d+)(?:[/?#][^\s]*)?$/i,
+          /^(?:https?:\/\/)?(?:(?:www|cn|zh)\.)?(?:opendota|dotabuff|stratz)\.com\/matches\/(\d+)(?:[/?#][^\s]*)?$/i,
         );
         const digits = link?.[1] ?? token;
         const id = Number(digits);
@@ -47,13 +51,13 @@ const summary = `SELECT m.match_id AS matchId,m.tag,m.patch,m.start_time AS star
   (SELECT count(p.id) ${participantJoin} WHERE mp.match_id=m.match_id) AS linkedPlayersCount,
   (SELECT json_group_array(json_object('orderIndex',order_index,'heroId',hero_id,'side',side,'isPick',is_pick)
     ORDER BY order_index) FROM match_picks_bans WHERE match_id=m.match_id) AS preview
-  FROM matches m WHERE m.source='tournament'`;
+  FROM matches m`;
 
 export function listMatches(db: DatabaseSync, tag: string, q: string) {
   return db
     .prepare(
       summary +
-        ` AND (?='' OR m.tag=?) AND
+        ` WHERE m.source='tournament' AND (?='' OR m.tag=?) AND
     (instr(CAST(m.match_id AS TEXT),?) OR instr(lower(m.tag),lower(?))
      OR instr(lower(COALESCE(m.radiant_name,'') || ' ' || COALESCE(m.dire_name,'')),lower(?))
      OR EXISTS(SELECT 1 ${participantJoin} WHERE mp.match_id=m.match_id AND
@@ -67,8 +71,12 @@ export function listMatches(db: DatabaseSync, tag: string, q: string) {
       picksBans: JSON.parse(String(preview)),
     }));
 }
-export function matchDetail(db: DatabaseSync, id: string) {
-  const m = db.prepare(summary + ' AND m.match_id=?').get(id);
+export function matchDetail(db: DatabaseSync, id: string, replay = false) {
+  const m = db
+    .prepare(
+      summary + ' WHERE m.match_id=? AND ' + (replay ? replayScope : "m.source='tournament'"),
+    )
+    .get(id);
   if (!m) throw new HttpError(404, '比赛不存在');
   const { preview, ...metadata } = m;
   const players = db
@@ -91,6 +99,7 @@ export function matchDetail(db: DatabaseSync, id: string) {
     hasParsed: !!m.hasParsed,
     players: players.map((p) => ({
       ...p,
+      neutralItem: p.item_neutral ? (items.get(Number(p.item_neutral)) ?? null) : null,
       items: (JSON.parse(String(p.items_json)) as number[]).map((id) =>
         id ? (items.get(id) ?? { id, cnName: '未收录物品', imgUrl: null }) : null,
       ),
@@ -110,6 +119,7 @@ export async function importMatch(
   id: number,
   tag?: string,
   refreshParsed = false,
+  source: 'tournament' | 'pub' = 'tournament',
 ) {
   const m = record(await client.get('/matches/' + id, undefined, refreshParsed));
   upstream(numberField(m.match_id) === id);
@@ -144,7 +154,7 @@ export async function importMatch(
   const picks = draft.filter((d) => d.pick);
   const first = picks[0]?.side;
   return transaction(db, () => {
-    const old = db.prepare('SELECT tag,has_parsed FROM matches WHERE match_id=?').get(id);
+    const old = db.prepare('SELECT tag,has_parsed,source FROM matches WHERE match_id=?').get(id);
     const linkedCount = () =>
       Number(
         db.prepare('SELECT count(p.id) AS n ' + participantJoin + ' WHERE mp.match_id=?').get(id)
@@ -152,7 +162,9 @@ export async function importMatch(
       );
     // 轮询期间删除的比赛不能被回填复活；较早发出的未解析响应也不能覆盖已解析记录。
     if (refreshParsed && !old) throw new HttpError(404, '比赛已删除');
+    const nextSource = refreshParsed || old?.source === 'tournament' ? old!.source : source;
     if (!hasParsed && (old?.has_parsed || refreshParsed)) {
+      db.prepare('UPDATE matches SET source=? WHERE match_id=?').run(nextSource, id);
       if (tag !== undefined) db.prepare('UPDATE matches SET tag=? WHERE match_id=?').run(tag, id);
       return {
         matchId: id,
@@ -165,13 +177,14 @@ export async function importMatch(
     const teamName = (value: unknown) => (value ? textField(record(value).name) : null);
     db.prepare(
       `INSERT INTO matches(match_id,source,tag,patch,start_time,duration,radiant_win,has_parsed,
-      radiant_name,dire_name,imported_at) VALUES(?,'tournament',?,?,?,?,?,?,?,?,?)
+      radiant_name,dire_name,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(match_id) DO UPDATE SET source=excluded.source,tag=excluded.tag,patch=excluded.patch,
       start_time=excluded.start_time,duration=excluded.duration,radiant_win=excluded.radiant_win,
       has_parsed=excluded.has_parsed,radiant_name=excluded.radiant_name,dire_name=excluded.dire_name,
       imported_at=excluded.imported_at`,
     ).run(
       id,
+      nextSource,
       tag ?? old?.tag ?? '',
       m.patch == null ? null : String(m.patch),
       optionalNumber(m.start_time),
@@ -187,8 +200,8 @@ export async function importMatch(
     const add =
       db.prepare(`INSERT INTO match_players(match_id,player_slot,side,is_radiant,account_id,
       personaname,hero_id,kills,deaths,assists,gpm,xpm,hero_damage,tower_damage,last_hits,lane,lane_role,
-      draft_order,pick_order,items_json,obs_log_json,sen_log_json,lane_pos_json)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      draft_order,pick_order,items_json,obs_log_json,sen_log_json,lane_pos_json,denies,hero_healing,item_neutral,obs_left_log_json,sen_left_log_json)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     for (const p of players) {
       const f = faction(p.player_slot),
         hero = numberField(p.hero_id, 1);
@@ -196,7 +209,8 @@ export async function importMatch(
       const account = optionalNumber(p.account_id);
       upstream(
         (p.obs_log == null || Array.isArray(p.obs_log)) &&
-          (p.sen_log == null || Array.isArray(p.sen_log)),
+          (p.sen_log == null || Array.isArray(p.sen_log)) &&
+          [p.obs_left_log, p.sen_left_log].every((log) => log == null || Array.isArray(log)),
       );
       const lanePosition = p.lane_pos == null ? {} : record(p.lane_pos);
       const items = Array.from({ length: 6 }, (_, i) => optionalNumber(p['item_' + i]) ?? 0);
@@ -226,6 +240,11 @@ export async function importMatch(
         JSON.stringify(p.obs_log ?? []),
         JSON.stringify(p.sen_log ?? []),
         JSON.stringify(lanePosition),
+        optionalNumber(p.denies),
+        optionalNumber(p.hero_healing),
+        optionalNumber(p.item_neutral),
+        JSON.stringify(p.obs_left_log ?? []),
+        JSON.stringify(p.sen_left_log ?? []),
       );
     }
     const action = db.prepare(

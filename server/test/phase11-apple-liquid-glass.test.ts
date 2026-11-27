@@ -17,7 +17,7 @@ function storage() {
   };
 }
 
-test('迁移仅保留阵容，连续刷新总是从第一手开始', () => {
+test('清理旧阵容与动作，连续刷新从第一手开始', () => {
   const store = storage();
   store.setItem('bp-prep-v1', '{损坏');
   store.setItem(
@@ -41,10 +41,10 @@ test('迁移仅保留阵容，连续刷新总是从第一手开始', () => {
     assert.equal(room.id, undefined);
     assert.equal(room.revision, undefined);
     assert.equal(room.cmOrderVersion, '7.42-standard');
-    assert.equal(room.radiantTeamId, 2);
-    assert.equal(room.ourSide, 'dire');
-    assert.deepEqual(room.radiantPlayerIds, [3, 4, 5, 6, 7]);
-    assert.equal(room.instant, true);
+    assert.equal(room.radiantTeamId, null);
+    assert.equal(room.ourSide, 'radiant');
+    assert.deepEqual(room.radiantPlayerIds, Array(5).fill(null));
+    assert.equal(room.instant, false);
     assert.equal(room.notes, '');
     assert.equal(store.getItem('bp-live-v3'), null);
     assert.equal(store.getItem('bp-prep-v1'), null);
@@ -63,18 +63,27 @@ test('迁移仅保留阵容，连续刷新总是从第一手开始', () => {
   }
 });
 
-test('v1 的槽位、v4 关闭直锁及新版本优先顺序', () => {
+test('优先读取 v5 手选阵容并强制关闭直锁', () => {
   const store = storage();
   store.setItem(
     'bp-prep-v1',
     JSON.stringify({ our: 'dire', first: 'dire', radiant: { team: 1, slots: [7, 0, 0, 0, 0] } }),
   );
-  store.setItem(setupKey, JSON.stringify({ firstPickSide: 'radiant', instant: false }));
+  store.setItem(
+    setupKey,
+    JSON.stringify({
+      ourSide: 'dire',
+      radiantPlayerIds: [7, null, null, null, null],
+      firstPickSide: 'radiant',
+      instant: true,
+    }),
+  );
   const room = initialRoom(store);
   assert.deepEqual(room.radiantPlayerIds, [7, null, null, null, null]);
   assert.equal(room.firstPickSide, 'radiant');
   assert.equal(room.ourSide, 'dire');
   assert.equal(room.instant, false);
+  assert.equal(setupKey, 'bp-setup-v5');
 });
 
 test('按首发位置装填两队，仅空白盘面应用并过滤重复选手', () => {
@@ -126,9 +135,9 @@ test('Snell 位移中心和外部中性，直边和两端圆角向内采样', ()
   assert.deepEqual(lensPixel(wide, 340, 38), [128, 128, 255, 255]);
 });
 
-test('Service Worker 使用 Phase 11 缓存壳', () => {
+test('Service Worker 使用 v10 构建缓存壳', () => {
   assert.match(
     readFileSync(new URL('../../web/sw.js', import.meta.url), 'utf8'),
-    /prefix \+ 'v7-__BUILD_ID__'/,
+    /prefix \+ 'v10-__BUILD_ID__'/,
   );
 });

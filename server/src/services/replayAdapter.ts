@@ -1,7 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
 
 export type ReplayLayer = 'wards' | 'farming';
-export type WardEvent = { x: number; y: number; time: number };
+export type WardEvent = {
+  x: number;
+  y: number;
+  time: number;
+  durationSec?: number;
+  dewarded?: boolean | null;
+};
 export type PositionSample = { x: number; y: number; weight: number };
 export type ReplayTrack = {
   playerSlot: number;
@@ -24,13 +30,36 @@ function numeric(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
-export function readWardEvents(json: string): WardEvent[] {
+export function readWardEvents(json: string, leftJson = '[]'): WardEvent[] {
   const result: WardEvent[] = [];
+  const exits = (JSON.parse(leftJson) as Record<string, unknown>[])
+    .filter(Boolean)
+    .sort((a, b) => Number(a.time) - Number(b.time));
   for (const event of JSON.parse(json)) {
     const x = numeric(event?.x),
       y = numeric(event?.y),
       time = numeric(event?.time);
-    if (x !== null && y !== null && time !== null) result.push({ x, y, time });
+    if (x === null || y === null || time === null) continue;
+    const same = (e: Record<string, unknown>) =>
+      event.ehandle != null && e.ehandle != null
+        ? e.ehandle === event.ehandle
+        : numeric(e.x) === x && numeric(e.y) === y;
+    const i = exits.findIndex((e) => numeric(e.time) !== null && Number(e.time) >= time && same(e));
+    const end = i < 0 ? undefined : exits.splice(i, 1)[0];
+    result.push(
+      end
+        ? {
+            x,
+            y,
+            time,
+            durationSec: Number(end.time) - time,
+            dewarded:
+              typeof end.attackername === 'string'
+                ? end.attackername.startsWith('npc_dota_hero_')
+                : null,
+          }
+        : { x, y, time },
+    );
   }
   return result;
 }
@@ -55,7 +84,10 @@ export class OpenDotaReplayAdapter implements ReplayParserAdapter {
   }
   parseReplay(matchId: number, slots: number[], layer: ReplayLayer): ReplayTrack[] {
     if (!slots.length) return [];
-    const columns = layer === 'wards' ? 'obs_log_json, sen_log_json' : 'lane_pos_json';
+    const columns =
+      layer === 'wards'
+        ? 'obs_log_json, sen_log_json,obs_left_log_json,sen_left_log_json'
+        : 'lane_pos_json';
     return this.db
       .prepare(
         `SELECT player_slot, ${columns} FROM match_players
@@ -64,8 +96,14 @@ export class OpenDotaReplayAdapter implements ReplayParserAdapter {
       .all(matchId, ...slots)
       .map((row) => ({
         playerSlot: Number(row.player_slot),
-        obs: layer === 'wards' ? readWardEvents(String(row.obs_log_json)) : [],
-        sen: layer === 'wards' ? readWardEvents(String(row.sen_log_json)) : [],
+        obs:
+          layer === 'wards'
+            ? readWardEvents(String(row.obs_log_json), String(row.obs_left_log_json))
+            : [],
+        sen:
+          layer === 'wards'
+            ? readWardEvents(String(row.sen_log_json), String(row.sen_left_log_json))
+            : [],
         positions: layer === 'farming' ? positions(String(row.lane_pos_json)) : [],
       }));
   }

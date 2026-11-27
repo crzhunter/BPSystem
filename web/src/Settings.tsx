@@ -9,7 +9,6 @@ import {
   Wifi,
 } from 'lucide-react';
 import { api, failure, type Network, type Notify, type Settings } from './api';
-import { PageIntro } from './Library';
 export function SettingsView({
   heroCount,
   refresh,
@@ -115,7 +114,6 @@ export function SettingsView({
   }
   return (
     <>
-      <PageIntro title="系统设置" description="管理战绩、备份和手机访问。" />
       {loadError && (
         <div className="notice">
           {loadError} <button onClick={() => setRetry((n) => n + 1)}>重新加载</button>

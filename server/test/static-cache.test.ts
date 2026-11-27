@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { createApp } from '../src/app.ts';
-import { openDb, root } from '../src/db/index.ts';
+import { openDb } from '../src/db/index.ts';
 
 test('生产模式下入口和 SW 禁止 HTTP 缓存，只有带哈希的静态资源长期缓存', async (t) => {
-  const dist = mkdtempSync(join(root, '.bp-static-'));
+  const dist = mkdtempSync(join(tmpdir(), '.bp-static-'));
   t.after(() => rmSync(dist, { recursive: true, force: true }));
   mkdirSync(join(dist, 'assets'));
   const files = {

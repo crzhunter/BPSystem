@@ -231,7 +231,7 @@ test('同步逐补丁取完整汇总，包含未来版本，逐场投影 patch�
   );
 });
 
-test('版本、阵容和对位占 82%，选手贡献受上限和位置约束，旧权重超界时回到安全范围', (t) => {
+test('有队模式下版本、阵容和对位占 40%，选手贡献受上限和位置约束，旧权重超界时回到安全范围', (t) => {
   const f = fixture(t),
     id = f.player(),
     other = f.player();
@@ -240,18 +240,18 @@ test('版本、阵容和对位占 82%，选手贡献受上限和位置约束，�
   const d = normalizeDraft(f.db, { radiantPlayerIds: [other, null, null, id] });
   const r = recommend(f.db, d, undefined, 4);
   const w = r.weights.pick;
-  assert.equal(w.player, 0.18);
-  assert.ok(Math.abs(w.meta + w.composition + w.matchup + w.strategy - 0.82) < 1e-9);
+  assert.equal(w.player, 0.60);
+  assert.ok(Math.abs(w.meta + w.composition + w.matchup + w.strategy - 0.40) < 1e-9);
   assert.equal(r.weights.ban.player, 0);
   const hero = r.pickRecommendations.find((h) => h.heroId === 7)!;
-  assert.ok(hero.playerContribution > 0 && hero.playerContribution <= 18);
+  assert.ok(hero.playerContribution > 0 && hero.playerContribution <= 60);
   assert.deepEqual(
     hero.targetPlayers.map((p) => p.playerId),
     [id],
   );
   const vacant = normalizeDraft(f.db, {}),
     base = recommend(f.db, vacant, undefined, 4).pickRecommendations.find((h) => h.heroId === 7)!;
-  assert.ok(Math.abs(hero.score - (base.score * 0.82 + hero.playerContribution)) < 0.2);
+  assert.ok(Math.abs(hero.score - (base.score * 0.40 + hero.playerContribution)) < 0.2);
   const put = f.db.prepare("INSERT OR REPLACE INTO settings VALUES('player_pool_weight',?,'a')");
   for (const [legacy, expected] of [
     ['0.42', 0.2],

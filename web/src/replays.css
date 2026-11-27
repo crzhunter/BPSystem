@@ -287,19 +287,19 @@
 .replay-choice {
   min-width: 0;
   max-width: 100%;
-  background: #1d232d;
-  border: 1px solid var(--line);
+  background: var(--studio-field);
+  border: 1px solid var(--studio-edge);
   color: var(--soft);
   padding: 6px 10px;
-  border-radius: 4px;
+  border-radius: 10px;
   text-align: left;
   font-size: 13px;
 }
 .replay-choice[aria-pressed='true'],
 .replay-team-bar button[aria-pressed='true'] {
-  border-color: #759554;
-  background: #252b35;
-  color: #d7f4ba;
+  border-color: #7c9e97;
+  background: #344b4e;
+  color: #d5eee4;
 }
 .player-choice {
   display: grid;

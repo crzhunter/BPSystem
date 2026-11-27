@@ -5,7 +5,8 @@ import { initialRoom, roomFrom, setupKey, setupOf, type Action, type Room } from
 export function useDraftSession(notify: Notify) {
   const [initial] = useState(initialRoom);
   const [d, setD] = useState<Room>(() => roomFrom(initial));
-  const [instant, setInstant] = useState(initial.instant);
+  const instant = false;
+  const [watchlist, setWatchlist] = useState<number[]>([]);
   const [redo, setRedo] = useState<Action[]>([]);
   const [writes, setWrites] = useState(0);
   const queue = useRef(Promise.resolve());
@@ -64,5 +65,5 @@ export function useDraftSession(notify: Notify) {
       .finally(() => setWrites((n) => n - 1));
     return true;
   }
-  return { d, setD, instant, setInstant, redo, setRedo, bind, edit, writes };
+  return { d, setD, instant, watchlist, setWatchlist, redo, setRedo, bind, edit, writes };
 }

@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { LiquidGlass } from './LiquidGlass';
 import { Popover, SegmentedControl, spring } from './MotionControls';
 import type { useDraftSession } from './useDraftSession';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Archive,
   ArrowLeftRight,
@@ -10,7 +10,6 @@ import {
   RotateCcw,
   Undo2,
   UsersRound,
-  Check,
   Target,
   Crosshair,
 } from 'lucide-react';
@@ -31,7 +30,7 @@ import {
   type Advice,
 } from './draftModel';
 import { Roster, Scouting } from './DraftPanels';
-import { HeroPoolGrid } from './HeroPoolGrid';
+import { HeroPoolGrid, Portrait } from './HeroPoolGrid';
 import { DraftHud } from './DraftHud';
 import { RecommendationPanel } from './RecommendationPanel';
 import { CompositionMeter } from './CompositionMeter';
@@ -53,29 +52,17 @@ export function Draft({
   notify: Notify;
   ready: boolean;
 }) {
-  const { d, setD, redo, setRedo, instant, setInstant } = session;
+  const { d, setD, redo, setRedo, instant, watchlist, setWatchlist } = session;
   const [revision, setRevision] = useState(0),
     [busy, setBusy] = useState(''),
     [archive, setArchive] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false),
     [pending, setPending] = useState<number | null>(null);
+  const [intel, setIntel] = useState(false),
+    [watch, setWatch] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 767px)').matches);
   const [sheet, setSheet] = useState(false);
-  useLayoutEffect(() => {
-    if (!toolsOpen) return;
-    const originalY = window.scrollY;
-    if (mobile) {
-      // 手机触发器与头像网格相隔近一屏，打开时对齐采样背景。
-      const hero = document.querySelector('.pool-tile');
-      const overlay = document.querySelector('.setup-overlay');
-      if (hero && overlay) {
-        window.scrollBy(0, hero.getBoundingClientRect().top - overlay.getBoundingClientRect().top + 16);
-      }
-    }
-    // 展开战绩或聚焦靠下的控件可能移动页面，关闭时恢复进入位置。
-    return () => window.scrollTo(0, originalY);
-  }, [mobile, toolsOpen]);
   useEffect(() => {
     const media = matchMedia('(max-width: 767px)');
     const update = () => {
@@ -98,7 +85,11 @@ export function Draft({
   useEffect(() => {
     if (!pending) return;
     let active = true;
-    api<Advice>('/bp/recommend', 'POST', { ...d, previewHeroId: pending })
+    api<Advice>('/bp/recommend', 'POST', {
+      ...d,
+      previewHeroId: pending,
+      replacementStep: replacing === null ? undefined : replacing + 1,
+    })
       .then((data) => {
         if (active) setPreview({ draft: d, id: pending, result: data.preview });
       })
@@ -108,7 +99,7 @@ export function Draft({
     return () => {
       active = false;
     };
-  }, [d, pending, notify]);
+  }, [d, pending, replacing, notify]);
   const projected = preview?.draft === d && preview.id === pending ? preview.result : null;
   const [analysis, setAnalysis] = useState<{
     draft: Room;
@@ -247,7 +238,8 @@ export function Draft({
   }
   function lock(id: number) {
     setSheet(false);
-    if (archive || !heroes.some((h) => h.id === id)) return;
+    if (archive || !heroes.some((h) => h.id === id) || d.actions.some((a) => a.heroId === id))
+      return;
     if (replacing !== null) {
       void editAction(replacing, { ...d.actions[replacing], heroId: id });
       return;
@@ -269,9 +261,8 @@ export function Draft({
     });
   }
   function select(id: number) {
-    setSheet(false);
-    if (instant || replacing !== null) lock(id);
-    else setPending(id);
+    if (!d.actions.some((a) => a.heroId === id) && (!step.isCompleted || replacing !== null))
+      setPending(id);
   }
   useEffect(() => {
     function keydown(e: KeyboardEvent) {
@@ -282,7 +273,8 @@ export function Draft({
         setToolsOpen(false);
         return;
       }
-      if (archive || toolsOpen || sheet || document.querySelector('.slot-overlay')) return;
+      if (archive || toolsOpen || sheet || intel || document.querySelector('[role="dialog"]'))
+        return;
       const el = e.target as HTMLElement;
       const typing = el.isContentEditable || ['TEXTAREA', 'INPUT', 'SELECT'].includes(el.tagName);
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) {
@@ -295,7 +287,12 @@ export function Draft({
         e.preventDefault();
         search.current?.focus();
       }
-      if (e.key === 'Enter' && pending && (!typing || el === search.current)) {
+      if (
+        e.key === 'Enter' &&
+        pending &&
+        (!el.closest('button,a,summary') || el.closest('button[data-hero][aria-pressed="true"]')) &&
+        (!typing || el === search.current)
+      ) {
         e.preventDefault();
         lock(pending);
       }
@@ -317,12 +314,55 @@ export function Draft({
   const turnKey = [d.actions.length, step.side, d.ourSide, d.firstPickSide].join('/');
   const enemy = opposite(d.ourSide);
   const editStep = replacing === null ? null : order[replacing];
-  const actionText = step.actionType === 'ban' ? '禁用' : '选人';
+  const actionType = editStep?.actionType ?? step.actionType;
+  const actionText = actionType === 'ban' ? '禁用' : '选入';
+  const confirmText = '确认' + (editStep ? '替换为' : actionText);
+  function staged(compact: boolean) {
+    if (!candidate) return null;
+    return (
+      <div className={'staged-preview' + (compact ? ' compact' : '')}>
+        <Portrait hero={candidate} />
+        <span title={projected?.text}>
+          {candidate.typicalRoles.join('/')}号位
+          {projected
+            ? compact
+              ? projected.fillsRole
+                ? ' · 补' + projected.fillsRole + '号位'
+                : ' · ' +
+                  (projected.boostedDims.length
+                    ? '补强' + projected.boostedDims.length + '项'
+                    : '覆盖已有职能')
+              : ' · ' + projected.text
+            : ''}
+        </span>
+        <button className={'satin-btn ' + actionType} onClick={() => lock(candidate.id)}>
+          {confirmText} {candidate.cnName}
+        </button>
+        {!compact && (
+          <button
+            aria-pressed={watchlist.includes(candidate.id)}
+            onClick={() =>
+              setWatchlist((ids) =>
+                ids.includes(candidate.id)
+                  ? ids.filter((id) => id !== candidate.id)
+                  : [...ids, candidate.id],
+              )
+            }
+          >
+            {watchlist.includes(candidate.id) ? '★ 已备选' : '☆ 加入备选'}
+          </button>
+        )}
+      </div>
+    );
+  }
   const nextOurStep = order.slice(d.actions.length).find((s) => s.side === d.ourSide);
-  const teamName = (side: Side) => teams.find((t) => t.id === d[teamKey(side)])?.name ?? '自由阵容';
   const recommendations = data ? (
     <RecommendationPanel
       data={data}
+      key={turnKey}
+      actionText={editStep ? '确认替换' : step.isOurTurn ? actionText : '录入对方'}
+      actionType={actionType}
+      canLock={synced && !analysis?.error && (!step.isCompleted || !!editStep)}
       planAction={nextOurStep?.actionType}
       preference={preference}
       setPreference={setPreference}
@@ -350,8 +390,14 @@ export function Draft({
     <CompositionMeter data={data} our={d.ourSide} preview={projected} select={select} />
   );
   return (
-    <div className="bp-room">
-      <div className="room-controls">
+    <div className="bp-room studio-page">
+      <header className="room-controls studio-header">
+        <div className="room-heading">
+          <h1>BP 对局室</h1>
+          <small>
+            {d.patch} · {sideNames[d.firstPickSide]}先选
+          </small>
+        </div>
         <LiquidGlass>
           <button
             className="setup-trigger"
@@ -359,12 +405,15 @@ export function Draft({
             onClick={() => setToolsOpen(!toolsOpen)}
           >
             <UsersRound size={17} />
-            <span>
-              {d.patch} · 我方{sideNames[d.ourSide]} · {sideNames[d.firstPickSide]}先选 ·{' '}
-              {teamName('radiant')} vs {teamName('dire')}
-            </span>
+            <span>对局配置</span>
           </button>
         </LiquidGlass>
+        <button className="satin-btn" onClick={() => setIntel(true)}>
+          对战情报
+        </button>
+        <button className="satin-btn" aria-expanded={watch} onClick={() => setWatch(!watch)}>
+          备选池 · {watchlist.length}
+        </button>
         <div className="turn-island">
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
@@ -395,13 +444,17 @@ export function Draft({
                         ' · ' +
                         actionText}
                 </strong>
-                {editStep && <button onClick={() => setReplacing(null)}>取消替换</button>}
-                {!editStep && candidate && (
-                  <button onClick={() => lock(candidate.id)}>
-                    <Check size={14} />
-                    锁定{candidate.cnName}
+                {editStep && (
+                  <button
+                    onClick={() => {
+                      setReplacing(null);
+                      setPending(null);
+                    }}
+                  >
+                    取消替换
                   </button>
                 )}
+                {staged(true)}
               </LiquidGlass>
             </motion.div>
           </AnimatePresence>
@@ -417,14 +470,53 @@ export function Draft({
           </button>
           <button onClick={() => openRoom({ ...blank(), ...setupOf(d, instant) })}>
             <RotateCcw />
-            新开一局
+            重开
           </button>
           <button disabled={!!session.writes} onClick={() => setArchive(true)}>
             <Archive />
             存档
           </button>
         </LiquidGlass>
-      </div>
+      </header>
+      {watch && (
+        <div className="watch-strip studio-panel">
+          {watchlist.length
+            ? watchlist.map((id) => (
+                <span key={id}>
+                  <button
+                    disabled={d.actions.some((a) => a.heroId === id)}
+                    onClick={() => select(id)}
+                  >
+                    {heroName(id)}
+                  </button>
+                  <button
+                    aria-label={'移除' + heroName(id)}
+                    onClick={() => setWatchlist((ids) => ids.filter((n) => n !== id))}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))
+            : '预选英雄后，点击「加入备选」钉在这里。'}
+        </div>
+      )}
+      {intel && (
+        <Popover label="对战情报" className="studio-overlay" close={() => setIntel(false)}>
+          <button className="dialog-close" onClick={() => setIntel(false)}>
+            关闭
+          </button>
+          {data ? (
+            <Scouting
+              data={data.scoutingCard}
+              heroName={heroName}
+              teamId={d[teamKey(enemy)]}
+              slots={d[slotsKey(enemy)]}
+            />
+          ) : (
+            '正在读取情报…'
+          )}
+        </Popover>
+      )}
       <DraftHud
         d={d}
         teams={teams}
@@ -440,7 +532,7 @@ export function Draft({
           document.querySelector('.room-controls')?.scrollIntoView({ block: 'nearest' });
         }}
       />
-      <div className="bp-bench">
+      <div className="bp-bench studio-split">
         <div className="pool-column">
           {mobile && (
             <button className="sheet-trigger" onClick={() => setSheet(true)}>
@@ -452,7 +544,7 @@ export function Draft({
             {toolsOpen && (
               <Popover
                 label="对局与阵容配置"
-                className="setup-overlay"
+                className="studio-overlay room-setup"
                 close={() => setToolsOpen(false)}
               >
                 <h2>对局与阵容配置</h2>
@@ -495,12 +587,18 @@ export function Draft({
                     换边
                   </button>
                   <button
-                    className="fast-toggle"
-                    aria-pressed={instant}
-                    onClick={() => setInstant(!instant)}
+                    onClick={() =>
+                      change({
+                        ...d,
+                        radiantTeamId: null,
+                        direTeamId: null,
+                        radiantPlayerIds: Array(5).fill(null),
+                        direPlayerIds: Array(5).fill(null),
+                        actions: d.actions.map((a) => ({ ...a, assignedPlayerId: null })),
+                      })
+                    }
                   >
-                    <i />
-                    单击直锁
+                    清空双边战队（自由模式）
                   </button>
                 </div>{' '}
                 <div className="roster-pair">
@@ -546,7 +644,7 @@ export function Draft({
             search={search}
             pending={pending}
             select={select}
-            lock={lock}
+            staged={staged(false)}
           />
           {!mobile && diagnosis}
         </div>

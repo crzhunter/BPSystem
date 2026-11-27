@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDb, root, transaction } from '../src/db/index.ts';
+import { openDb, transaction } from '../src/db/index.ts';
 import { createApp } from '../src/app.ts';
 import { cmOrder, opposite, type Side } from '../src/data/cmOrder.ts';
 import { heroTags } from '../src/data/heroTags.ts';
@@ -342,7 +343,7 @@ test('位置和职能缺口影响同一英雄评分；已占位置不再推荐�
   assert.ok((taken.pickRecommendations.find((h) => h.heroId === 27)?.score ?? 0) < pick.score);
 });
 test('关闭并重开 SQLite 文件后，独立阵容、备注与选手归属完整保留', () => {
-  const directory = mkdtempSync(join(root, '.bp-session-'));
+  const directory = mkdtempSync(join(tmpdir(), '.bp-session-'));
   const file = join(directory, 'draft.sqlite');
   try {
     const first = openDb(file);

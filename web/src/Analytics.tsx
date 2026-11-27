@@ -1,8 +1,13 @@
-import { Reveal } from './MotionControls';
 import { useEffect, useState } from 'react';
 import { api, failure, type Notify, type Player } from './api';
 
 type Side = 'radiant' | 'dire';
+type Counts = Stats & {
+  radiantGames: number;
+  radiantWins: number;
+  direGames: number;
+  direWins: number;
+};
 type Stats = { games: number; wins: number; winrate: number | null };
 type Split = Record<Side, Stats> & { delta: number | null };
 type Signature = {
@@ -13,11 +18,11 @@ type Signature = {
   source: string;
   patch742Games: number;
   patch742Wins: number;
-  patchPub: Stats;
-  patchTournament: Stats;
+  patchPub: Counts;
+  patchTournament: Counts;
   isPatch742Sample: boolean;
-  pub: Stats & { recentGames: number };
-  tournament: Stats;
+  pub: Counts & { recentGames: number };
+  tournament: Counts;
 };
 type Profile = {
   privacyHint: string | null;
@@ -79,24 +84,14 @@ export function SlotIntel({ id, side, revision }: { id: number; side: Side; revi
     </div>
   );
 }
-export function PlayerAnalysis({ player }: { player: Player }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="analysis-toggle">
-      <button className="subtle-button" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? '收起' : '查看'}
-        {player.nickname}的战绩
-      </button>
-      <Reveal open={open}><ProfileCard player={player} /></Reveal>
-    </div>
-  );
-}
-function ProfileCard({ player }: { player: Player }) {
+export function ProfileCard({ player }: { player: Player }) {
   const { profile: p, error } = useProfile(player.id, player.lastSyncedAt);
+  const [scope, setScope] = useState('patch'),
+    [side, setSide] = useState<'all' | 'radiant' | 'dire'>('all');
   if (!p) return <p className="hint">{error || '正在读取战绩…'}</p>;
   const form = p.recentForm;
   return (
-    <section className="analysis-card">
+    <section className="studio-card analysis-card">
       {p.privacyHint && <p className="notice">{p.privacyHint}</p>}
       <h3>7.42+ 近期路人状态</h3>
       {form.games ? (
@@ -118,8 +113,8 @@ function ProfileCard({ player }: { player: Player }) {
           const s = p.sideSplits[source];
           return (
             <p key={source}>
-              <b>{['综合', '比赛', '路人'][i]}</b>　天辉 {pct(s.radiant.winrate)}（{s.radiant.games} 场）
-              · 夜魇 {pct(s.dire.winrate)}（{s.dire.games} 场）
+              <b>{['综合', '比赛', '路人'][i]}</b>　天辉 {pct(s.radiant.winrate)}（{s.radiant.games}{' '}
+              场） · 夜魇 {pct(s.dire.winrate)}（{s.dire.games} 场）
             </p>
           );
         })}
@@ -131,22 +126,51 @@ function ProfileCard({ player }: { player: Player }) {
           .map((r) => r.role + ' 号位 ' + pct(r.percent) + '（' + r.games + ' 场）')
           .join(' · ') || '暂无可推断位置的分路记录'}
       </p>
-      <h3>绝活英雄池</h3>
-      {p.heroPool.map((h) => (
-        <div className="pool-row" key={h.heroId}>
-          <b>
-            {h.grade} · {h.name}
-          </b>
-          <span>
-            {h.isPatch742Sample ? '7.42 起有战绩 · ' + h.patch742Wins + ' 胜 / ' + h.patch742Games + ' 场' : '旧版参考 · 过往曾用'} · 熟练分 {h.weightedScore}
-          </span>
-          <small>
-            历史比赛 {h.tournament.games} 场 · 胜率 {pct(h.tournament.winrate)}　生涯路人 {h.pub.games} 场 · 胜率{' '}
-            {pct(h.pub.winrate)}（近期 {h.pub.recentGames} 场）
-          </small>
-        </div>
-      ))}
-      {!p.heroPool.length && <p>同步路人战绩或导入比赛后，可查看英雄评分。</p>}
+      <h3>英雄池战绩</h3>
+      <div className="studio-actions">
+        <select aria-label="英雄池样本" value={scope} onChange={(e) => setScope(e.target.value)}>
+          <option value="patch">7.42 起</option>
+          <option value="life">生涯</option>
+          <option value="tour">仅赛事</option>
+        </select>
+        <select
+          aria-label="英雄池阵营"
+          value={side}
+          onChange={(e) => setSide(e.target.value as typeof side)}
+        >
+          <option value="all">全部阵营</option>
+          <option value="radiant">天辉</option>
+          <option value="dire">夜魇</option>
+        </select>
+      </div>
+      {side !== 'all' && <small>阵营筛选仅统计有阵营信息的逐场记录。</small>}
+      {p.heroPool.map((h) => {
+        const sources =
+          scope === 'patch'
+            ? [h.patchPub, h.patchTournament]
+            : scope === 'tour'
+              ? [h.tournament]
+              : [h.pub, h.tournament];
+        const games = sources.reduce(
+          (n, s) =>
+            n + (side === 'all' ? s.games : s[side === 'dire' ? 'direGames' : 'radiantGames']),
+          0,
+        );
+        const wins = sources.reduce(
+          (n, s) => n + (side === 'all' ? s.wins : s[side === 'dire' ? 'direWins' : 'radiantWins']),
+          0,
+        );
+        return games ? (
+          <div className="roster-line" key={h.heroId}>
+            <img className="mini-face" src={'/portraits/' + h.heroId + '.webp'} alt="" />
+            <b>{h.name}</b>
+            <span>
+              {wins} 胜 / {games} 场 · {Math.round((100 * wins) / games)}%
+            </span>
+          </div>
+        ) : null;
+      })}
+      {!p.heroPool.length && <p>同步战绩或导入比赛后可查看英雄统计。</p>}
     </section>
   );
 }
@@ -178,7 +202,11 @@ export function TeamSync({
       );
       await refresh();
       notify(
-        '全队同步完成，成功 ' + (results.length - failed.length) + ' 人，失败 ' + failed.length + ' 人',
+        '全队同步完成，成功 ' +
+          (results.length - failed.length) +
+          ' 人，失败 ' +
+          failed.length +
+          ' 人',
         !!failed.length,
       );
     } catch (e) {

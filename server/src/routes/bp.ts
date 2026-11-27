@@ -93,16 +93,21 @@ export function bpRoutes(db: DatabaseSync, client: OpenDotaClient) {
     res.sendStatus(204);
   });
   r.post('/bp/recommend', (req, res) => {
+    const draft =
+      req.body.sessionId === undefined
+        ? normalizeDraft(db, req.body)
+        : readSession(db, id(req.body.sessionId));
     res.json(
       recommend(
         db,
-        req.body.sessionId === undefined
-          ? normalizeDraft(db, req.body)
-          : readSession(db, id(req.body.sessionId)),
+        draft,
         req.body.previewHeroId == null
           ? undefined
           : integer(req.body.previewHeroId, 1, Number.MAX_SAFE_INTEGER, '预览英雄'),
         parsePreference(req.body.rolePreference),
+        req.body.replacementStep == null
+          ? undefined
+          : integer(req.body.replacementStep, 1, draft.actions.length, '替换手数'),
       ),
     );
   });

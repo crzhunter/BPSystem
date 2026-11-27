@@ -1,3 +1,4 @@
+import { extractTeam } from '../services/extractTeam.ts';
 import { Router } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type { OpenDotaClient } from '../services/opendota.ts';
@@ -6,13 +7,20 @@ import { HttpError, stringValue } from '../utils/input.ts';
 
 export function matchRoutes(db: DatabaseSync, client: OpenDotaClient) {
   const r = Router();
+  r.post('/matches/:matchId/extract-team', (req, res) =>
+    res.status(201).json(extractTeam(db, req.params.matchId, req.body.side, req.body.name)),
+  );
   r.post('/matches/import', async (req, res) => {
     const ids = matchIds(req.body.matchIds);
     const tag = req.body.tag === undefined ? undefined : stringValue(req.body.tag, '赛事标签', 100);
     const results = [];
     for (const matchId of ids) {
       if (typeof matchId !== 'number') {
-        results.push({ matchId: matchId.slice(0, 80), imported: false, error: '比赛 ID 或链接无效' });
+        results.push({
+          matchId: matchId.slice(0, 80),
+          imported: false,
+          error: '比赛 ID 或链接无效',
+        });
         continue;
       }
       try {

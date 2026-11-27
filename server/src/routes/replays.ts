@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import { check, HttpError, stringValue } from '../utils/input.ts';
-import { importMatch } from '../services/matches.ts';
+import { replayScope } from '../services/replayScope.ts';
+import { importMatch, matchDetail } from '../services/matches.ts';
 import type { OpenDotaClient } from '../services/opendota.ts';
 import type { ReplayParserAdapter } from '../services/replayAdapter.ts';
 import {
@@ -28,7 +29,7 @@ function choice<T extends string>(value: unknown, options: readonly T[]): T {
   check(options.includes(value as T), '筛选项无效');
   return value as T;
 }
-function filters(q: Record<string, unknown>, farming: boolean): ReplayFilters {
+function filters(q: Record<string, unknown>): ReplayFilters {
   if (q.accountId !== undefined || q.playerSlot !== undefined)
     check(q.matchId !== undefined, '按参赛账号或槽位筛选时须指定比赛');
   if (q.playerSlot !== undefined)
@@ -44,7 +45,7 @@ function filters(q: Record<string, unknown>, farming: boolean): ReplayFilters {
     playerId: q.playerId === undefined ? undefined : id(q.playerId),
     accountId: q.accountId === undefined ? undefined : id(q.accountId),
     playerSlot: q.playerSlot === undefined ? undefined : Number(q.playerSlot),
-    heroId: !farming || q.heroId === undefined ? undefined : id(q.heroId),
+    heroId: q.heroId === undefined ? undefined : id(q.heroId),
     tag: q.tag === undefined ? undefined : stringValue(q.tag, '赛事标签', 100),
     side: choice(q.side, ['all', 'radiant', 'dire']),
     wardType: choice(q.wardType, ['both', 'obs', 'sen']),
@@ -60,18 +61,34 @@ export function replayRoutes(
   const r = Router();
   r.get('/replays/players', (_req, res) => res.json(replayPlayers(db)));
   r.get('/replays/players/:playerId/matches', (req, res) =>
-    res.json(replayPlayerMatches(db, id(req.params.playerId))),
+    res.json(replayPlayerMatches(db, id(req.params.playerId), req.query.rich === '1')),
   );
   r.get('/replays/matches/:matchId/participants', (req, res) =>
     res.json(replayMatchParticipants(db, id(req.params.matchId))),
   );
+  r.get('/replays/matches/:matchId/scoreboard', (req, res) =>
+    res.json(matchDetail(db, req.params.matchId, true)),
+  );
+  r.post('/players/:id/recent-matches/:matchId/replay', async (req, res) => {
+    const playerId = id(req.params.id),
+      matchId = id(req.params.matchId);
+    check(
+      db
+        .prepare('SELECT 1 FROM player_pub_matches WHERE player_id=? AND match_id=?')
+        .get(playerId, matchId),
+      '找不到该选手的逐场记录',
+    );
+    if (!db.prepare('SELECT 1 FROM matches WHERE match_id=?').get(matchId))
+      await importMatch(db, client, matchId, undefined, false, 'pub');
+    res.json({ matchId, playerId });
+  });
   function state(matchId: number) {
     const row = db
       .prepare(
         `SELECT m.has_parsed,
       (SELECT COALESCE(SUM(json_array_length(obs_log_json)+json_array_length(sen_log_json)),0)
         FROM match_players WHERE match_id=m.match_id) wardCount
-      FROM matches m WHERE m.match_id=? AND m.source='tournament'`,
+      FROM matches m WHERE m.match_id=? AND ${replayScope}`,
       )
       .get(matchId);
     if (!row) throw new HttpError(404, '比赛不存在');
@@ -100,10 +117,10 @@ export function replayRoutes(
     res.json({ ...local, status });
   });
   r.get('/replays/wards', async (req, res) =>
-    res.json(await wardHeatmap(db, adapter, filters(req.query, false))),
+    res.json(await wardHeatmap(db, adapter, filters(req.query))),
   );
   r.get('/replays/farming', async (req, res) =>
-    res.json(await farmingHeatmap(db, adapter, filters(req.query, true))),
+    res.json(await farmingHeatmap(db, adapter, filters(req.query))),
   );
   return r;
 }

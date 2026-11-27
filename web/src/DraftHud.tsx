@@ -50,13 +50,36 @@ export function DraftHud({
             slots = d[slotsKey(s)],
             first = d.firstPickSide === s,
             Icon = s === 'radiant' ? Sprout : Flame;
+          const hasRoster = !!d[teamKey(s)] || slots.some(Boolean);
+          const label = (id: number | null) => {
+            const p = players.find((p) => p.id === id);
+            return p?.alias || p?.nickname;
+          };
+          const lineup = advice?.composition[s === d.ourSide ? 'our' : 'enemy'];
+          const picks = team.filter((t) => t.actionType === 'pick');
+          const assigned = picks.map((t) => {
+            const a = d.actions[t.step - 1];
+            return (
+              a &&
+              (a.roleHint ||
+                (a.assignedPlayerId && slots.indexOf(a.assignedPlayerId) + 1) ||
+                lineup?.assignments.find((h) => h.heroId === a.heroId)?.role)
+            );
+          });
+          const missing = [1, 2, 3, 4, 5].filter((r) => !assigned.includes(r));
+          let free = 0;
+          const displayRoles = assigned.map((r) => r || missing[free++]);
           return (
             <section className={'faction ' + s} key={s} aria-label={sideNames[s] + '禁选'}>
               <header>
                 <Icon size={24} />
                 <h2>
                   {sideNames[s]}{' '}
-                  <strong>{teams.find((team) => team.id === d[teamKey(s)])?.name}</strong>
+                  {hasRoster && (
+                    <strong>
+                      {teams.find((team) => team.id === d[teamKey(s)])?.name || '自定义阵容'}
+                    </strong>
+                  )}
                 </h2>
                 <b>{s === d.ourSide ? '我方' : '对方'}</b>
                 <small>
@@ -99,15 +122,31 @@ export function DraftHud({
                           onClick={() => replace(i)}
                         >
                           {h ? <Portrait hero={h} /> : <Shield size={23} />}
-                          <small>{h ? `第 ${t.step} 手` : `${slot + 1}号位`}</small>
-                          <b>
-                            {h?.cnName ??
-                              players.find((p) => p.id === slots[slot])?.nickname ??
-                              '待分配'}
-                          </b>
+                          <small>
+                            {displayRoles[slot]}号位{' '}
+                            {hasRoster ? label(slots[displayRoles[slot] - 1]) : ''}
+                          </small>
+                          {h && <b>{h.cnName}</b>}
                         </button>
                         {a && (
                           <>
+                            {s !== d.ourSide &&
+                              !roleOf(a) &&
+                              lineup?.assignments.some((v) => v.heroId === a.heroId) && (
+                                <button
+                                  className="assign-trigger"
+                                  disabled={occupied.includes(displayRoles[slot])}
+                                  onClick={() =>
+                                    assign(i, {
+                                      ...a,
+                                      roleHint: displayRoles[slot],
+                                      assignedPlayerId: slots[displayRoles[slot] - 1],
+                                    })
+                                  }
+                                >
+                                  钉住 {displayRoles[slot]} 号位
+                                </button>
+                              )}
                             <button
                               className="assign-trigger"
                               aria-expanded={open?.i === i}
@@ -120,10 +159,7 @@ export function DraftHud({
                                 });
                               }}
                             >
-                              {roleOf(a) || '自动'}
-                              {roleOf(a) ? '号位' : ''} ·{' '}
-                              {players.find((p) => p.id === a.assignedPlayerId)?.nickname ??
-                                '分配选手'}
+                              {roleOf(a) ? '已钉' : '预测'} {displayRoles[slot]}号位 · 调整
                             </button>
                             <AnimatePresence>
                               {open?.i === i && (
@@ -153,7 +189,11 @@ export function DraftHud({
                                           )}
                                           aria-pressed={(a.roleHint ?? 0) === r}
                                           onClick={() => {
-                                            assign(i, { ...a, roleHint: r || null });
+                                            assign(i, {
+                                              ...a,
+                                              roleHint: r || null,
+                                              assignedPlayerId: r ? slots[r - 1] : null,
+                                            });
                                             setOpen(undefined);
                                           }}
                                         >
@@ -172,16 +212,19 @@ export function DraftHud({
                                           disabled={
                                             !!id &&
                                             (others.some((x) => x.assignedPlayerId === id) ||
-                                              (!a.roleHint &&
-                                                occupied.includes(slots.indexOf(id) + 1)))
+                                              occupied.includes(slots.indexOf(id) + 1))
                                           }
                                           aria-pressed={a.assignedPlayerId === id}
                                           onClick={() => {
-                                            assign(i, { ...a, assignedPlayerId: id });
+                                            assign(i, {
+                                              ...a,
+                                              assignedPlayerId: id,
+                                              roleHint: id ? slots.indexOf(id) + 1 : a.roleHint,
+                                            });
                                             setOpen(undefined);
                                           }}
                                         >
-                                          {players.find((p) => p.id === id)?.nickname ?? '待分配'}
+                                          {label(id) ?? '解除绑定'}
                                         </button>
                                       ))}
                                     </div>
@@ -327,10 +370,24 @@ export function DraftHud({
         aria-label={'禁选进度，第 ' + step.phase + ' 阶段，已走 ' + d.actions.length + ' 手'}
       >
         <div className="track-head">
-          <b>禁选进度</b>
+          <b>阶段战术简报</b>
           <span>
             第 {step.phase} 阶段 · {d.actions.length} / 24 手
           </span>
+          <small>
+            {step.isCompleted
+              ? '阵容锁定'
+              : sideNames[step.side] +
+                (step.isFirstPickTeam ? '先选' : '后选') +
+                ' · ' +
+                (step.step === 24
+                  ? '尾选针对敌核'
+                  : next?.actionType === 'ban' && step.actionType === 'pick'
+                    ? '下轮禁用保护核心'
+                    : step.actionType === 'ban'
+                      ? '封锁关键配合'
+                      : '留意双人配合')}
+          </small>
           {next?.side === step.side && (
             <strong>
               下一手仍由{step.isOurTurn ? '我方' : '对方'}
@@ -344,6 +401,12 @@ export function DraftHud({
             </strong>
           )}
         </div>
+        {advice && (
+          <small className="remaining-roles">
+            我方待出 {advice.composition.our.missingRoles.join('/') || '无'} · 敌方待出{' '}
+            {advice.composition.enemy.missingRoles.join('/') || '无'}
+          </small>
+        )}
         <div className="steps">
           {order.map((t) => {
             const a = d.actions[t.step - 1],

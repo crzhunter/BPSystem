@@ -1,7 +1,7 @@
-import { AnimatePresence, MotionConfig, motion } from 'framer-motion';
+import { MotionConfig } from 'framer-motion';
 import { LiquidGlass } from './LiquidGlass';
-import { SegmentedControl, spring } from './MotionControls';
-import { seedDefaultTeams, slotsKey, teamKey, sides } from './draftModel';
+import { SegmentedControl } from './MotionControls';
+import { blank, opposite, slotsKey, teamKey, sides } from './draftModel';
 import { useDraftSession } from './useDraftSession';
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import {
@@ -9,7 +9,6 @@ import {
   Trophy,
   Shield,
   UsersRound,
-  SlidersHorizontal,
   Radio,
   MapPinned,
   Check,
@@ -21,20 +20,20 @@ import { Draft } from './Draft';
 import { Matches } from './Matches';
 const Replays = lazy(() => import('./Replays').then((module) => ({ default: module.Replays })));
 import { Players, Teams } from './Library';
-import { SettingsView } from './Settings';
 const pages = [
-  { id: 'draft', name: '实时 BP 对局室', short: '对局室', icon: Swords },
-  { id: 'teams', name: '战队管理', short: '战队', icon: Shield },
-  { id: 'players', name: '选手库', short: '选手', icon: UsersRound },
-  { id: 'matches', name: '比赛库 / 导入', short: '比赛库', icon: Trophy },
-  { id: 'replays', name: '录像分析', short: '录像分析', icon: MapPinned },
-  { id: 'settings', name: '系统设置', short: '设置', icon: SlidersHorizontal },
+  { id: 'draft', name: 'BP 对局室', short: '对局室', icon: Swords },
+  { id: 'teams', name: '战队设置', short: '战队', icon: Shield },
+  { id: 'players', name: '选手设置', short: '选手', icon: UsersRound },
+  { id: 'matches', name: '比赛导入', short: '比赛', icon: Trophy },
+  { id: 'replays', name: '回放复盘', short: '复盘', icon: MapPinned },
 ];
 function pageFromHash() {
   const [tab, query] = location.hash.split('?');
+  const target = tab === '#settings' ? '#matches' : tab;
   return {
-    ...(pages.find((p) => '#' + p.id === tab) ?? pages[0]),
+    ...(pages.find((p) => '#' + p.id === target) ?? pages[0]),
     params: new URLSearchParams(query),
+    maintenance: tab === '#settings',
   };
 }
 export function App() {
@@ -74,7 +73,7 @@ export function App() {
               : a,
           ),
         };
-      return seedDefaultTeams(next, t);
+      return next;
     });
     setPlayers(p);
     setTeams(t);
@@ -106,6 +105,8 @@ export function App() {
     };
   }, [load]);
   useEffect(() => {
+    if (page.maintenance && location.hash.split('?')[0] === '#settings')
+      history.replaceState(null, '', '#matches');
     document.title = page.name + ' · BPSystem';
   }, [page]);
   useEffect(() => {
@@ -152,43 +153,60 @@ export function App() {
               {online === null ? '连接中' : online ? '服务在线' : '重新连接'}
             </button>
           </header>
+          <div className="site-bar-spacer" aria-hidden="true" />
           <main>
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.div
-                key={page.id}
-                initial={{ y: 4 }}
-                animate={{ y: 0 }}
-                exit={{ y: -4, opacity: 0 }}
-                transition={spring}
-              >
-                {page.id === 'draft' ? (
-                  <Draft
-                    session={session}
-                    players={players}
-                    teams={teams}
+            <div key={page.id}>
+              {page.id === 'draft' ? (
+                <Draft
+                  session={session}
+                  players={players}
+                  teams={teams}
+                  heroes={heroes}
+                  notify={notify}
+                  ready={online === true}
+                />
+              ) : page.id === 'matches' ? (
+                <Matches
+                  key={page.params.toString()}
+                  settingsRequest={page.maintenance ? page.params : null}
+                  heroes={heroes}
+                  refresh={refresh}
+                  notify={notify}
+                />
+              ) : page.id === 'replays' ? (
+                <Suspense fallback={<p role="status">正在打开录像分析…</p>}>
+                  <Replays
+                    key={page.params.toString()}
+                    initialParams={page.params}
                     heroes={heroes}
+                    refresh={refresh}
                     notify={notify}
-                    ready={online === true}
+                    teams={teams}
                   />
-                ) : page.id === 'matches' ? (
-                  <Matches heroes={heroes} refresh={refresh} notify={notify} />
-                ) : page.id === 'replays' ? (
-                  <Suspense fallback={<p role="status">正在打开录像分析…</p>}>
-                    <Replays
-                      key={page.params.toString()}
-                      initialParams={page.params}
-                      teams={teams}
-                    />
-                  </Suspense>
-                ) : page.id === 'players' ? (
-                  <Players players={players} refresh={refresh} notify={notify} />
-                ) : page.id === 'teams' ? (
-                  <Teams teams={teams} players={players} refresh={refresh} notify={notify} />
-                ) : (
-                  <SettingsView heroCount={heroes.length} refresh={refresh} notify={notify} />
-                )}
-              </motion.div>
-            </AnimatePresence>
+                </Suspense>
+              ) : page.id === 'players' ? (
+                <Players heroes={heroes} players={players} refresh={refresh} notify={notify} />
+              ) : (
+                <Teams
+                  teams={teams}
+                  players={players}
+                  heroes={heroes}
+                  refresh={refresh}
+                  notify={notify}
+                  enter={(team, own) => {
+                    const side = own ? session.d.ourSide : opposite(session.d.ourSide);
+                    session.bind({
+                      ...blank(),
+                      ourSide: session.d.ourSide,
+                      firstPickSide: session.d.firstPickSide,
+                      [teamKey(side)]: team.id,
+                      [slotsKey(side)]: team.roster.map((m) => m.player?.id ?? null),
+                    });
+                    location.hash = 'draft';
+                  }}
+                />
+              )}
+            </div>
           </main>
         </div>
         <nav className="mobile-island">

@@ -129,7 +129,7 @@ test('v1 原位升级保留既有阵容、比赛和自定义权重；新库采�
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((r) => r.version),
-      [1, 2, 3, 4, 5, 6, 7],
+      [1, 2, 3, 4, 5, 6, 7, 8],
     );
     db.exec('DELETE FROM settings');
     assert.equal(readSettings(db).tournamentMatchWeight, 4);
@@ -383,7 +383,7 @@ test('JSON 全量往返，密钥留在本机，错误外键与无效 JSON 数据
   await f.req('/matches/import', 'POST', { matchIds: [789] });
   await f.req('/settings', 'PUT', { opendotaApiKey: 'local-test-secret', pubRecentDays: 37 });
   const snap = await f.req('/backup/export');
-  assert.equal(snap.version, 4);
+  assert.equal(snap.version, 5);
   assert.ok(!JSON.stringify(snap).includes('local-test-secret'));
   assert.equal(snap.match_players.length, 10);
   assert.equal(snap.player_pub_heroes.length, 1);
@@ -396,6 +396,14 @@ test('JSON 全量往返，密钥留在本机，错误外键与无效 JSON 数据
   const { exportedAt: before, ...expected } = snap;
   assert.deepEqual(restored, expected);
   assert.equal((await dest.req('/settings')).maskedPreview, '••••-key');
+  const v4=structuredClone(snap);v4.version=4;delete v4.player_hero_overrides;
+  for(const p of v4.players) for(const col of ['alias','rank_tier','primary_role','leaderboard_rank','style_tags_json']) delete p[col];
+  for(const p of v4.match_players) for(const col of ['denies','hero_healing','item_neutral','obs_left_log_json','sen_left_log_json']) delete p[col];
+  await dest.req('/backup/import','POST',v4);
+  const upgraded=await dest.req('/backup/export');
+  assert.deepEqual(upgraded.player_hero_overrides,[]);assert.deepEqual(upgraded.players,snap.players);
+  assert.deepEqual(upgraded.player_pub_heroes,snap.player_pub_heroes);
+  assert.deepEqual(upgraded.match_players,snap.match_players);
   for (const mutate of [
     (s: typeof snap) => (s.player_pub_matches[0].player_id = 9999),
     (s: typeof snap) => (s.players[0].roles_json = '{}'),

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { heroPortraitUrl } from '../data/catalog.ts';
+import { heroPortraitUrl, listItems } from '../data/catalog.ts';
 import { heroTags } from '../data/heroTags.ts';
+import { replayScope } from './replayScope.ts';
 import { HttpError } from '../utils/input.ts';
 import { readWardEvents, type ReplayParserAdapter } from './replayAdapter.ts';
 
@@ -37,6 +38,8 @@ type Point = { nx: number; ny: number };
 type WardPoint = Point &
   Pick<Participant, 'side' | 'matchId' | 'heroId' | 'heroName' | 'playerName' | 'accountId'> & {
     time: number;
+    durationSec?: number;
+    dewarded?: boolean | null;
     rawX: number;
     rawY: number;
     wardType: 'obs' | 'sen';
@@ -48,7 +51,7 @@ export function replayPlayers(db: DatabaseSync) {
       `SELECT p.id,p.nickname,p.roles_json rolesJson,
     COUNT(DISTINCT m.match_id) parsedMatchCount FROM players p
     LEFT JOIN match_players mp ON mp.account_id=p.account_id
-    LEFT JOIN matches m ON m.match_id=mp.match_id AND m.source='tournament' AND m.has_parsed=1
+    LEFT JOIN matches m ON m.match_id=mp.match_id AND ${replayScope} AND m.has_parsed=1
     GROUP BY p.id ORDER BY parsedMatchCount DESC,p.nickname COLLATE NOCASE,p.id`,
     )
     .all()
@@ -64,21 +67,39 @@ const participantName =
   "COALESCE(NULLIF(p.nickname,''),NULLIF(mp.personaname,''),CAST(mp.account_id AS TEXT),'匿名选手')";
 const heroName = "COALESCE(NULLIF(h.cn_name,''),'英雄 ' || mp.hero_id)";
 // 两个入口共用同一份参赛记录。只在比赛内使用槽位辨认匿名选手，避免合并不同人的样本。
-function matchRows(db: DatabaseSync, column: 'p.id' | 'm.match_id', id: number) {
+function matchRows(
+  db: DatabaseSync,
+  column: 'p.id' | 'm.match_id',
+  id: number,
+  rich = false,
+  limit?: number,
+) {
+  const items = rich ? new Map(listItems(db).map((i) => [i.id, i])) : null;
   const rows = db
     .prepare(
       `SELECT m.match_id matchId,m.tag,m.start_time startTime,m.duration,m.has_parsed hasParsed,
     mp.side,(m.radiant_win=mp.is_radiant) win,mp.hero_id heroId,${heroName} heroCnName,
     h.localized_name heroLocalizedName,h.name internalName,mp.kills,mp.deaths,mp.assists,mp.gpm,mp.xpm,
+    ${rich ? 'm.source source,mp.items_json items,mp.item_neutral neutral,' : ''}
     mp.obs_log_json obs,mp.sen_log_json sen,
     mp.player_slot playerSlot,p.id playerId,mp.account_id accountId,${participantName} playerName
     FROM matches m JOIN match_players mp ON mp.match_id=m.match_id
     LEFT JOIN players p ON p.account_id=mp.account_id LEFT JOIN heroes h ON h.id=mp.hero_id
-    WHERE m.source='tournament' AND ${column}=?
-    ORDER BY m.start_time DESC,m.match_id DESC,mp.player_slot`,
+    WHERE ${replayScope} AND ${column}=?
+    ORDER BY m.start_time DESC,m.match_id DESC,mp.player_slot ${limit ? 'LIMIT ' + limit : ''}`,
     )
     .iterate(id);
   return Array.from(rows, (r) => ({
+    ...(items
+      ? {
+          source: r.source === 'pub' ? '路人' : '赛事',
+          items: (JSON.parse(String(r.items)) as number[])
+            .concat(Array(6).fill(0))
+            .slice(0, 6)
+            .map((id) => items.get(id) ?? null),
+          neutralItem: items.get(Number(r.neutral)) ?? null,
+        }
+      : {}),
     matchId: Number(r.matchId),
     tag: String(r.tag),
     startTime: r.startTime as number | null,
@@ -106,15 +127,42 @@ function matchRows(db: DatabaseSync, column: 'p.id' | 'm.match_id', id: number) 
     playerName: String(r.playerName),
   }));
 }
-export function replayPlayerMatches(db: DatabaseSync, playerId: number) {
+export function replayPlayerMatches(db: DatabaseSync, playerId: number, rich = false) {
   if (!db.prepare('SELECT 1 FROM players WHERE id=?').get(playerId))
     throw new HttpError(404, '选手不存在');
-  return matchRows(db, 'p.id', playerId);
+  return matchRows(db, 'p.id', playerId, rich);
+}
+export function recentPlayerMatches(db: DatabaseSync, playerId: number) {
+  if (!db.prepare('SELECT 1 FROM players WHERE id=?').get(playerId))
+    throw new HttpError(404, '选手不存在');
+  const imported = matchRows(db, 'p.id', playerId, true, 30).map((r) => ({
+    ...r,
+    detailAvailable: true,
+  }));
+  const pub = db
+    .prepare(
+      `SELECT pm.match_id matchId,pm.hero_id heroId,h.cn_name heroCnName,pm.side,pm.win,
+    pm.start_time startTime,pm.kills,pm.deaths,pm.assists,pm.gpm,pm.xpm FROM player_pub_matches pm
+    JOIN heroes h ON h.id=pm.hero_id WHERE pm.player_id=? AND NOT EXISTS (
+    SELECT 1 FROM matches m JOIN match_players mp USING(match_id) JOIN players p USING(account_id)
+    WHERE m.match_id=pm.match_id AND p.id=pm.player_id)
+    ORDER BY pm.start_time DESC LIMIT 30`,
+    )
+    .all(playerId)
+    .map((r) => ({
+      ...r,
+      source: '路人',
+      detailAvailable: false,
+      items: [],
+      neutralItem: null,
+      startTime: Number(r.startTime),
+    }));
+  return [...imported, ...pub].sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0)).slice(0, 30);
 }
 export function replayMatchParticipants(db: DatabaseSync, matchId: number) {
-  if (!db.prepare("SELECT 1 FROM matches WHERE match_id=? AND source='tournament'").get(matchId))
+  if (!db.prepare(`SELECT 1 FROM matches m WHERE match_id=? AND ${replayScope}`).get(matchId))
     throw new HttpError(404, '比赛不存在');
-  return matchRows(db, 'm.match_id', matchId);
+  return matchRows(db, 'm.match_id', matchId, true);
 }
 
 export function normalizeCoordinates(x: number, y: number): Point {
@@ -122,7 +170,7 @@ export function normalizeCoordinates(x: number, y: number): Point {
   return { nx: clamp((x - 64) / 128), ny: clamp(1 - (y - 64) / 128) };
 }
 function participants(db: DatabaseSync, f: ReplayFilters) {
-  const where = ["m.source='tournament'"],
+  const where = [replayScope],
     params: (string | number)[] = [];
   for (const [column, value] of [
     ['m.match_id', f.matchId],
@@ -231,7 +279,7 @@ export async function wardHeatmap(
       if (!p) continue;
       for (const wardType of ['obs', 'sen'] as const) {
         if (f.wardType !== 'both' && f.wardType !== wardType) continue;
-        for (const { x, y, time } of track[wardType]) {
+        for (const { x, y, time, durationSec, dewarded } of track[wardType]) {
           if (!inPhase(time, f.phase)) continue;
           const { nx, ny } = normalizeCoordinates(x, y);
           points.push({
@@ -241,6 +289,7 @@ export async function wardHeatmap(
             rawY: y,
             time,
             wardType,
+            ...(durationSec === undefined ? {} : { durationSec, dewarded }),
             side: p.side,
             matchId,
             heroId: p.heroId,
@@ -267,7 +316,38 @@ export async function wardHeatmap(
       const center = { nx: c.nx / c.count, ny: c.ny / c.count };
       return { ...center, count: c.count, zone: zones[zone(center)] };
     });
-  return { summary, points, hotspots, unparsedMatches };
+  const measured = points.filter((p) => p.durationSec !== undefined);
+  const dewarded = measured.filter((p) => p.dewarded === true).length;
+  const enemyObserver = points.filter(
+    (p) => p.wardType === 'obs' && (p.side === 'radiant' ? zone(p) === 4 : zone(p) === 3),
+  ).length;
+  const sentries = points.filter((p) => p.wardType === 'sen');
+  const sentriesByZone = zones.map(() => 0);
+  for (const p of sentries) sentriesByZone[zone(p)]++;
+  const mainSentryZone = zones[sentriesByZone.indexOf(Math.max(...sentriesByZone))];
+  const sentryText = sentries.length
+    ? ` 真眼 ${sentries.length} 个，主要布在${mainSentryZone}，可结合后续假眼判断是否建立了持续视野。`
+    : '';
+  const visionDiagnosis = {
+    enemyJungleObservers: enemyObserver,
+    matched: measured.length,
+    dewarded,
+    averageDurationSec: measured.length
+      ? Math.round(measured.reduce((n, p) => n + p.durationSec!, 0) / measured.length)
+      : null,
+    text: hotspots.length
+      ? '布眼最集中在' +
+        hotspots[0].zone +
+        '。' +
+        (dewarded
+          ? '有守卫被排，下一次进区可先用真眼探路。'
+          : measured.length
+            ? '结合兵线检查视野是否覆盖下一次转线。'
+            : '缺少移除记录，无法判断被排情况。') +
+        sentryText
+      : '暂无眼位样本。',
+  };
+  return { summary, points, hotspots, unparsedMatches, visionDiagnosis };
 }
 
 export async function farmingHeatmap(
@@ -276,6 +356,15 @@ export async function farmingHeatmap(
   f: ReplayFilters,
 ) {
   const grid = new Map<string, Point & { rawX: number; rawY: number; weight: number }>();
+  const tacticalNames = [
+    '优势路安全线',
+    '劣势路施压线',
+    '中路河道',
+    '己方主野区',
+    '三角区与远古',
+    '侵略敌方野区',
+  ];
+  const tactical = tacticalNames.map(() => 0);
   const weights = zones.map(() => 0);
   let totalWeight = 0,
     peak = 0,
@@ -321,7 +410,29 @@ export async function farmingHeatmap(
         };
         cell.weight += weight;
         totalWeight += weight;
-        weights[zone(cell)] += weight;
+        const z = zone(cell),
+          radiant = p.side === 'radiant';
+        weights[z] += weight;
+        // 在每个选手自己的视角分类后再汇总，跨阵营同一坐标可能属于不同战术区域。
+        const ownX = radiant ? cell.nx : 1 - cell.nx,
+          ownY = radiant ? cell.ny : 1 - cell.ny;
+        const region =
+          z === 0
+            ? radiant
+              ? 1
+              : 0
+            : z === 2
+              ? radiant
+                ? 0
+                : 1
+              : z === 1 || z === 5
+                ? 2
+                : z !== (radiant ? 3 : 4)
+                  ? 5
+                  : ownX < 0.46 && ownY < 0.68
+                    ? 4
+                    : 3;
+        tactical[region] += weight;
         peak = Math.max(peak, cell.weight);
         grid.set(key, cell);
       }
@@ -336,6 +447,19 @@ export async function farmingHeatmap(
       avgXpm: xpN ? xp / xpN : null,
       totalWeight,
     },
+    tacticalZones: tacticalNames.map((zone, i) => ({
+      zone,
+      weight: tactical[i],
+      percentage: totalWeight ? (100 * tactical[i]) / totalWeight : 0,
+    })),
+    farmingDiagnosis: totalWeight
+      ? '活动最集中在' +
+        tacticalNames[tactical.indexOf(Math.max(...tactical))] +
+        '。' +
+        (tactical[5] > totalWeight * 0.2
+          ? '入侵频繁，推进前应先保护进出野区的视野。'
+          : '转线时可结合兵线与外塔状态安排下一轮收线。')
+      : '暂无位置采样。',
     cells: [...grid.values()].map((c) => ({ ...c, intensity: c.weight / peak })),
     zoneBreakdown: zones.map((name, i) => ({
       zone: name,

@@ -1,6 +1,6 @@
 import { SegmentedControl } from './MotionControls';
 import { LiquidGlass } from './LiquidGlass';
-import { memo, useMemo, useState, type MouseEvent, type RefObject } from 'react';
+import { memo, useMemo, useState, type ReactNode, type MouseEvent, type RefObject } from 'react';
 import { Search, Dumbbell, Feather, Sparkles, Orbit, Check } from 'lucide-react';
 import type { Hero } from './api';
 import { cmOrder, sideNames, type Room } from './draftModel';
@@ -50,27 +50,29 @@ function pinyin(name: string) {
 const HeroTile = memo(function HeroTile({
   h,
   status,
+  takenTitle,
   match,
   filtering,
   selected,
   disabled,
 }: {
   h: Hero;
+  takenTitle?: string;
   status?: 'ban' | 'radiant' | 'dire';
   match: boolean;
   filtering: boolean;
   selected: boolean;
   disabled: boolean;
 }) {
-  const label = status === 'ban' ? '已禁' : status ? sideNames[status] : '';
+  const label = status === 'ban' ? '已禁' : status ? sideNames[status] + '选' : '';
   return (
     <button
       data-hero={h.id}
-      title={h.cnName + ' · ' + h.typicalRoles.join('/') + ' 号位'}
+      title={takenTitle ?? h.cnName + ' · ' + h.typicalRoles.join('/') + ' 号位'}
       aria-label={h.cnName + (label ? ' · ' + label : '')}
       className={[
         'pool-tile',
-        status === 'ban' ? 'banned' : '',
+        status === 'ban' ? 'banned' : status ? 'picked ' + status : '',
         !match ? 'dimmed' : filtering ? 'matched' : '',
         selected ? 'selected' : '',
       ].join(' ')}
@@ -93,7 +95,7 @@ export function HeroPoolGrid({
   d,
   pending,
   select,
-  lock,
+  staged,
   search,
   query,
   setQuery,
@@ -105,7 +107,7 @@ export function HeroPoolGrid({
   d: Room;
   pending: number | null;
   select: (id: number) => void;
-  lock: (id: number) => void;
+  staged: ReactNode;
   search: RefObject<HTMLInputElement | null>;
   query: string;
   setQuery: (value: string) => void;
@@ -145,9 +147,9 @@ export function HeroPoolGrid({
     (n, g) => n + g.list.filter(({ h, terms }) => matches(h, terms)).length,
     0,
   );
-  function choose(event: MouseEvent<HTMLDivElement>, handler: (id: number) => void) {
+  function choose(event: MouseEvent<HTMLDivElement>) {
     const button = (event.target as Element).closest<HTMLButtonElement>('button[data-hero]');
-    if (button && !button.disabled) handler(Number(button.dataset.hero));
+    if (button && !button.disabled) select(Number(button.dataset.hero));
   }
   const jump = (key: string) =>
     document.getElementById('pool-' + key)?.scrollIntoView({ block: 'start' });
@@ -180,7 +182,7 @@ export function HeroPoolGrid({
               if (hits.length === 1) {
                 e.preventDefault();
                 e.stopPropagation();
-                lock(hits[0].h.id);
+                select(hits[0].h.id);
               }
             }}
           />
@@ -205,6 +207,7 @@ export function HeroPoolGrid({
           options={[0, 1, 2, 3, 4, 5].map((r) => ({ value: r, label: r ? r + '号位' : '全部' }))}
         />
       </div>
+      {staged}
       <div className="attr-jumps">
         {groups.map((g) => (
           <button key={g.key} className={'attr-' + g.key} onClick={() => jump(g.key)}>
@@ -213,11 +216,7 @@ export function HeroPoolGrid({
           </button>
         ))}
       </div>
-      <div
-        className="pool-quads"
-        onClick={(e) => choose(e, select)}
-        onDoubleClick={(e) => choose(e, lock)}
-      >
+      <div className="pool-quads" onClick={choose}>
         {sections.map((g) => (
           <section id={'pool-' + g.key} key={g.key} className={'attr-group attr-' + g.key}>
             <h3>
@@ -235,6 +234,14 @@ export function HeroPoolGrid({
                     key={h.id}
                     h={h}
                     status={taken?.actionType === 'ban' ? 'ban' : taken?.side}
+                    takenTitle={
+                      taken &&
+                      '第 ' +
+                        taken.step +
+                        ' 手 · ' +
+                        sideNames[taken.side] +
+                        (taken.actionType === 'ban' ? '已禁' : '已选')
+                    }
                     match={match}
                     filtering={filtering}
                     selected={selected}

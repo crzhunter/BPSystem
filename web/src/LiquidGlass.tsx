@@ -103,11 +103,11 @@ const LensFilter = memo(function LensFilter({
       <feSpecularLighting
         surfaceScale={map.bezel * 0.65}
         specularExponent="26"
-        lightingColor="#ffffff"
+        lightingColor="#dbe7f5"
       >
         <feDistantLight azimuth="225" elevation="32" />
       </feSpecularLighting>
-      <feComposite in2="refracted" operator="arithmetic" k2="0.55" k3="1" result="lit" />
+      <feComposite in2="refracted" operator="arithmetic" k2="0.09" k3="1" result="lit" />
       {/* 平顶独立采样避开 128/255 带来的亚像素漂移。羽化权重互补，相加可避免过渡带变暗。 */}
       <feColorMatrix
         in="map"

@@ -234,6 +234,18 @@ export function MinimapHeatmap({
             <span>
               {selected.heroName} · {selected.playerName}
             </span>
+            <span>
+              {selected.durationSec === undefined
+                ? '存活时长未知'
+                : '存活 ' +
+                  timestamp(selected.durationSec) +
+                  ' · ' +
+                  (selected.dewarded === true
+                    ? '被排'
+                    : selected.dewarded === false
+                      ? '非英雄移除'
+                      : '移除原因未知')}
+            </span>
             <span>比赛 {selected.matchId}</span>
           </div>
         )}
@@ -253,7 +265,11 @@ export function MinimapHeatmap({
         </label>
         {!farming && (
           <label>
-            <input type="checkbox" checked={markers} onChange={(e) => setMarkers(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={markers}
+              onChange={(e) => setMarkers(e.target.checked)}
+            />
             显示精确眼位
           </label>
         )}

@@ -2,10 +2,12 @@ import { SegmentedControl } from './MotionControls';
 import { LiquidGlass } from './LiquidGlass';
 import { useCallback, useEffect, useState } from 'react';
 import { Crosshair, Footprints, Layers, MapPinned, Search, UsersRound } from 'lucide-react';
-import { api, failure, type Team } from './api';
+import { api, failure, type Team, type Hero, type Notify } from './api';
 import type { replayPlayerMatches, replayPlayers } from '../../server/src/services/replay';
 import { Portrait } from './HeroPoolGrid';
-import { PageIntro } from './Library';
+import { StudioHeader } from './Studio';
+import { MatchDetail } from './Matches';
+import { ItemSlots } from './ItemSlots';
 import { MinimapHeatmap, type WardMap, type FarmMap } from './MinimapHeatmap';
 import { ParseReplayButton } from './ParseReplayButton';
 import './replays.css';
@@ -45,9 +47,18 @@ function Select({
   options: [string, string][];
   set: (value: string) => void;
 }) {
-  if (['阵营','眼位类型','比赛时段','位置范围'].includes(label))
-    return <div className="replay-filter-choice"><span>{label}</span><SegmentedControl label={label} value={value}
-      options={options.map(([value,label]) => ({value,label}))} onChange={set} /></div>;
+  if (['阵营', '眼位类型', '比赛时段', '位置范围'].includes(label))
+    return (
+      <div className="replay-filter-choice">
+        <span>{label}</span>
+        <SegmentedControl
+          label={label}
+          value={value}
+          options={options.map(([value, label]) => ({ value, label }))}
+          onChange={set}
+        />
+      </div>
+    );
   return (
     <label>
       {label}
@@ -87,6 +98,12 @@ function WardStats({ data }: { data: WardMap }) {
             <strong>{s.senCount}</strong>
           </div>
         </div>
+        <h3>视野与反眼习惯</h3>
+        <p>{data.visionDiagnosis.text}</p>
+        <p className="hint">
+          匹配移除 {data.visionDiagnosis.matched} 个 · 确认被排 {data.visionDiagnosis.dewarded} 个 ·
+          平均存活 {data.visionDiagnosis.averageDurationSec ?? '—'} 秒
+        </p>
         <p className="hint">
           天辉 {s.radiantCount} 个 · 夜魇 {s.direCount} 个
         </p>
@@ -148,7 +165,7 @@ function FarmStats({ data }: { data: FarmMap }) {
           <Layers />
           区域活动占比
         </h2>
-        {data.zoneBreakdown.map((z) => (
+        {data.tacticalZones.map((z) => (
           <div className="zone" key={z.zone}>
             <label>
               {z.zone}
@@ -157,7 +174,7 @@ function FarmStats({ data }: { data: FarmMap }) {
             </label>
           </div>
         ))}
-        <p className="hint">按录像里英雄在各区出现的次数计算，多场一起看。</p>
+        <p className="hint">{data.farmingDiagnosis}</p>
       </section>
     </>
   );
@@ -213,6 +230,7 @@ function MatchCard({
             {[row.kills, row.deaths, row.assists].map((v) => v ?? '—').join(' / ')}
           </span>
         </span>
+        {row.items && <ItemSlots items={row.items} neutralItem={row.neutralItem} />}
       </button>
       {!row.hasParsed && (
         <ParseReplayButton matchId={row.matchId} onParsed={reload} label="请求解析" />
@@ -244,6 +262,8 @@ function HeatmapPanel({
   revision,
   reload,
   selectedMatch,
+  heroId,
+  setHeroId,
 }: {
   identity: { playerId: number } | { accountId: number } | { playerSlot: number };
   matchId: number | null;
@@ -257,22 +277,23 @@ function HeatmapPanel({
   revision: number;
   reload: () => void;
   selectedMatch?: MatchRow;
+  heroId: string;
+  setHeroId: (v: string) => void;
 }) {
   const [wardType, setWardType] = useState('both'),
     [phase, setPhase] = useState('all'),
     [roleScope, setRoleScope] = useState(initialRole),
-    [heroId, setHeroId] = useState(''),
     [tag, setTag] = useState('');
   const params = new URLSearchParams({ side });
   for (const [key, value] of Object.entries(identity)) params.set(key, String(value));
   if (matchId != null) params.set('matchId', String(matchId));
   else if (tag) params.set('tag', tag);
+  if (!matchId && heroId) params.set('heroId', heroId);
   if (mode === 'wards') {
     params.set('phase', phase);
     params.set('wardType', wardType);
   } else {
     params.set('roleScope', roleScope);
-    if (!matchId && heroId) params.set('heroId', heroId);
   }
   const wardResult = useReplayData<WardMap>(
     mode === 'wards' ? '/replays/wards?' + params : null,
@@ -293,15 +314,37 @@ function HeatmapPanel({
     else if (!ward.points.length) hint = '当前筛选下没有眼位，可调整眼位类型或比赛时段。';
     else hint = '悬停或点按标记查看眼位详情，重复点按可查看重叠眼位。';
   } else if (farm)
-    hint = farm.cells.length
-      ? '颜色越暖，选手越常在这一带活动。'
-      : '这些录像里还没找到刷钱路线。';
+    hint = farm.cells.length ? '颜色越暖，选手越常在这一带活动。' : '这些录像里还没找到刷钱路线。';
   const tags = Array.from(new Set(records.map((r) => r.tag).filter(Boolean)));
   const heroes = new Map(records.map((r) => [String(r.heroId), r.heroCnName]));
   return (
     <>
-      <SegmentedControl<Mode> className="replay-modes" label="分析模式" value={mode} onChange={setMode}
-        options={[{value:'wards',label:<><Crosshair size={16}/>眼位热力图</>},{value:'farming',label:<><Footprints size={16}/>刷钱热力图</>}]} />
+      <SegmentedControl<Mode>
+        className="replay-modes"
+        label="分析模式"
+        value={mode}
+        onChange={setMode}
+        options={[
+          {
+            value: 'wards',
+            label: (
+              <>
+                <Crosshair size={16} />
+                眼位热力图
+              </>
+            ),
+          },
+          {
+            value: 'farming',
+            label: (
+              <>
+                <Footprints size={16} />
+                刷钱热力图
+              </>
+            ),
+          },
+        ]}
+      />
       <section className="panel replay-filters" aria-label="热图筛选">
         <Select
           label="阵营"
@@ -348,15 +391,19 @@ function HeatmapPanel({
                 ['cores', '仅核心位（1–3 号位）'],
               ]}
             />
-            {!matchId && heroes.size > 0 && (
-              <Select
-                label="英雄"
-                value={heroId}
-                set={setHeroId}
-                options={[['', '全部英雄'], ...heroes]}
-              />
-            )}
           </>
+        )}
+        {!matchId && heroes.size > 0 && (
+          <div className="hero-filter wide">
+            <span>所玩英雄</span>
+            <div className="id-chips">
+              {[['', '全部英雄'], ...heroes].map(([id, label]) => (
+                <button key={id} aria-pressed={id === heroId} onClick={() => setHeroId(id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {!matchId && tags.length > 0 && (
           <Select
@@ -367,7 +414,7 @@ function HeatmapPanel({
           />
         )}
       </section>
-      <div className="replay-layout">
+      <div className="replay-layout studio-split">
         <section className="panel replay-map-card">
           <header>
             <div>
@@ -405,9 +452,15 @@ function HeatmapPanel({
 export function Replays({
   teams,
   initialParams,
+  heroes,
+  notify,
+  refresh,
 }: {
   teams: Team[];
   initialParams: URLSearchParams;
+  heroes: Hero[];
+  notify: Notify;
+  refresh: () => Promise<void>;
 }) {
   const [mode, setMode] = useState<Mode>(
     initialParams.get('mode') === 'farming' ? 'farming' : 'wards',
@@ -420,6 +473,8 @@ export function Replays({
   const [playerId, setPlayerId] = useState(Number(initialParams.get('playerId')) || null);
   const [entryMatch, setEntryMatch] = useState(Number(initialParams.get('matchId')) || null);
   const [drillId, setDrillId] = useState<number | null>(null);
+  const [heroId, setHeroId] = useState(''),
+    [scoreboard, setScoreboard] = useState(false);
   const [slot, setSlot] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [revision, setRevision] = useState(0);
@@ -453,7 +508,7 @@ export function Replays({
   const name = entryMatch ? member?.playerName : saved?.nickname;
   const matchId = entryMatch ?? drillId;
   const history = useReplayData<MatchRow[]>(
-    savedId ? '/replays/players/' + savedId + '/matches' : null,
+    savedId ? '/replays/players/' + savedId + '/matches?rich=1' : null,
     revision,
   );
   const records = history?.data ?? (member ? [member] : []);
@@ -469,6 +524,8 @@ export function Replays({
       : null;
   function openPlayer(id: number | null, match: number | null = null) {
     if (entryMatch) setTeamId(null);
+    setHeroId('');
+    setScoreboard(false);
     setEntryMatch(null);
     setSlot(null);
     setPlayerId(id);
@@ -479,178 +536,213 @@ export function Replays({
     if (row.matchId !== entryMatch && savedId) openPlayer(savedId, row.matchId);
   }
   return (
-    <div className="replays">
-      <PageIntro
-        title="录像分析"
+    <div className="replays studio-page">
+      <StudioHeader
+        stat={allPlayers.length + ' 名选手'}
+        title="回放复盘"
         description="选择选手查看多场布眼与刷钱分布，或打开一场比赛复盘当场表现。"
       />
-      <section className="panel replay-picker">
-        {entryMatch ? (
-          <>
-            <header>
-              <h2>
-                <UsersRound />
-                本场参赛选手
-              </h2>
-              <button className="subtle-button" onClick={() => openPlayer(savedId ?? null)}>
-                查看选手库录像
-              </button>
-            </header>
-            <p className="hint">比赛 {entryMatch} · 选择参赛者查看个人热图</p>
-            {participants?.error ? (
-              <Retry error={participants.error} reload={reload} />
-            ) : !group ? (
-              <p className="hint">正在读取参赛名单…</p>
-            ) : group.length ? (
-              <div className="participant-grid">
-                {group.map((p) => (
+      <div className="studio-split replay-workspace">
+        <section className="studio-panel replay-picker">
+          {entryMatch ? (
+            <>
+              <header>
+                <h2>
+                  <UsersRound />
+                  本场参赛选手
+                </h2>
+                <button className="subtle-button" onClick={() => openPlayer(savedId ?? null)}>
+                  查看选手库录像
+                </button>
+              </header>
+              <p className="hint">比赛 {entryMatch} · 选择参赛者查看个人热图</p>
+              {participants?.error ? (
+                <Retry error={participants.error} reload={reload} />
+              ) : !group ? (
+                <p className="hint">正在读取参赛名单…</p>
+              ) : group.length ? (
+                <div className="participant-grid">
+                  {group.map((p) => (
+                    <button
+                      key={p.playerSlot}
+                      className="replay-choice participant-choice"
+                      aria-pressed={member?.playerSlot === p.playerSlot}
+                      onClick={() => {
+                        setSlot(p.playerSlot);
+                        if (side !== p.side) setSide('all');
+                      }}
+                    >
+                      <HeroFace row={p} />
+                      <span>
+                        <b>{p.heroCnName}</b>
+                        <small>{p.playerName}</small>
+                        <span className={'replay-side ' + p.side}>{sideName[p.side]}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <p className="hint">这场比赛尚无参赛名单。</p>
+                  <ParseReplayButton matchId={entryMatch} onParsed={reload} label="请求解析" />
+                </>
+              )}
+              {group?.length && !member ? (
+                <p className="hint">该选手未参加这场比赛，请选择本场参赛者。</p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <header>
+                <h2>
+                  <UsersRound />
+                  选择选手
+                </h2>
+                <LiquidGlass className="replay-search">
+                  <Search size={15} />
+                  <input
+                    type="search"
+                    aria-label="搜索选手昵称"
+                    placeholder="搜索选手昵称"
+                    value={search}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      openPlayer(null);
+                    }}
+                  />
+                </LiquidGlass>
+              </header>
+              <div className="replay-team-bar" aria-label="按战队筛选">
+                {[{ id: null, name: '全部选手' }, ...teams].map((t) => (
                   <button
-                    key={p.playerSlot}
-                    className="replay-choice participant-choice"
-                    aria-pressed={member?.playerSlot === p.playerSlot}
+                    key={t.id ?? 'all'}
+                    aria-pressed={teamId === t.id}
                     onClick={() => {
-                      setSlot(p.playerSlot);
-                      if (side !== p.side) setSide('all');
+                      setTeamId(t.id);
+                      setSearch('');
+                      openPlayer(null);
                     }}
                   >
-                    <HeroFace row={p} />
-                    <span>
-                      <b>{p.heroCnName}</b>
-                      <small>{p.playerName}</small>
-                      <span className={'replay-side ' + p.side}>{sideName[p.side]}</span>
-                    </span>
+                    {t.name}
                   </button>
                 ))}
               </div>
-            ) : (
-              <>
-                <p className="hint">这场比赛尚无参赛名单。</p>
-                <ParseReplayButton matchId={entryMatch} onParsed={reload} label="请求解析" />
-              </>
-            )}
-            {group?.length && !member ? (
-              <p className="hint">该选手未参加这场比赛，请选择本场参赛者。</p>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <header>
-              <h2>
-                <UsersRound />
-                选择选手
-              </h2>
-              <LiquidGlass className="replay-search">
-                <Search size={15} />
-                <input
-                  type="search"
-                  aria-label="搜索选手昵称"
-                  placeholder="搜索选手昵称"
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    openPlayer(null);
-                  }}
-                />
-              </LiquidGlass>
-            </header>
-            <div className="replay-team-bar" aria-label="按战队筛选">
-              {[{ id: null, name: '全部选手' }, ...teams].map((t) => (
-                <button
-                  key={t.id ?? 'all'}
-                  aria-pressed={teamId === t.id}
-                  onClick={() => {
-                    setTeamId(t.id);
-                    setSearch('');
-                    openPlayer(null);
-                  }}
-                >
-                  {t.name}
-                </button>
-              ))}
-            </div>
-            <div className="replay-players">
-              {visible.map((p) => (
-                <button
-                  key={p.id}
-                  className="replay-choice player-choice"
-                  aria-pressed={saved?.id === p.id}
-                  onClick={() => openPlayer(p.id)}
-                >
-                  <b>{p.nickname}</b>
-                  <small>{p.roles.length ? p.roles.join('、') + ' 号位' : '位置未设置'}</small>
-                  <span className="parsed-count">已解析 {p.parsedMatchCount} 场</span>
-                </button>
-              ))}
-            </div>
-            {directory?.error ? (
-              <Retry error={directory.error} reload={reload} />
-            ) : !directory ? (
-              <p className="hint">正在读取选手…</p>
-            ) : !visible.length ? (
-              <p className="hint">
-                {allPlayers.length ? '没有符合条件的选手。' : '选手库为空，可前往选手库添加选手。'}
-              </p>
-            ) : (
-              !saved && <p className="hint">未找到链接中的选手，请重新选择。</p>
-            )}
-          </>
-        )}
-      </section>
-      {identity && name && (
-        <>
-          <section className="panel replay-picker replay-history">
-            <header>
-              <h2>
-                <Layers />
-                {name}的参赛记录
-              </h2>
-              {savedId && (
-                <button
-                  className="replay-choice aggregate-choice"
-                  aria-pressed={matchId === null}
-                  onClick={() => openPlayer(savedId)}
-                >
-                  合看已解析的比赛（{parsedCount ?? records.filter((r) => r.hasParsed).length}{' '}
-                  场）
-                </button>
+              <div className="replay-players">
+                {visible.map((p) => (
+                  <button
+                    key={p.id}
+                    className="replay-choice player-choice"
+                    aria-pressed={saved?.id === p.id}
+                    onClick={() => openPlayer(p.id)}
+                  >
+                    <b>{p.nickname}</b>
+                    <small>{p.roles.length ? p.roles.join('、') + ' 号位' : '位置未设置'}</small>
+                    <span className="parsed-count">已解析 {p.parsedMatchCount} 场</span>
+                  </button>
+                ))}
+              </div>
+              {directory?.error ? (
+                <Retry error={directory.error} reload={reload} />
+              ) : !directory ? (
+                <p className="hint">正在读取选手…</p>
+              ) : !visible.length ? (
+                <p className="hint">
+                  {allPlayers.length
+                    ? '没有符合条件的选手。'
+                    : '选手库为空，可前往选手库添加选手。'}
+                </p>
+              ) : (
+                !saved && <p className="hint">未找到链接中的选手，请重新选择。</p>
               )}
-            </header>
-            <div className="replay-records">
-              {records.map((row) => (
-                <MatchCard
-                  key={row.matchId}
-                  row={row}
-                  active={row.matchId === matchId}
-                  choose={() => chooseMatch(row)}
-                  reload={reload}
-                />
-              ))}
-            </div>
-            {history?.error ? (
-              <Retry error={history.error} reload={reload} />
-            ) : (
-              !records.length && (
-                <p className="hint">{history ? '暂无导入的赛事记录。' : '正在读取参赛记录…'}</p>
-              )
-            )}
-          </section>
-          <HeatmapPanel
-            key={savedId ?? 'slot-' + member?.playerSlot}
-            identity={identity}
-            matchId={matchId}
-            name={name}
-            records={records}
-            selectedMatch={selectedMatch}
-            mode={mode}
-            setMode={setMode}
-            side={side}
-            setSide={setSide}
-            initialRole={initialParams.get('roleScope') === 'cores' ? 'cores' : 'all'}
-            revision={revision}
-            reload={reload}
-          />
-        </>
-      )}
+            </>
+          )}
+        </section>
+        <div className="replay-main studio-panel">
+          {!identity && <p className="empty">选择有比赛记录的选手后，可查看布眼与发育分布。</p>}
+          {identity && name && (
+            <>
+              <section className="panel replay-picker replay-history">
+                <header>
+                  <h2>
+                    <Layers />
+                    {name}的参赛记录
+                  </h2>
+                  {savedId && (
+                    <button
+                      className="replay-choice aggregate-choice"
+                      aria-pressed={matchId === null}
+                      onClick={() => openPlayer(savedId)}
+                    >
+                      合看已解析的比赛（{parsedCount ?? records.filter((r) => r.hasParsed).length}{' '}
+                      场）
+                    </button>
+                  )}
+                </header>
+                <div className="replay-records">
+                  {records
+                    .filter(
+                      (r) =>
+                        (side === 'all' || r.side === side) &&
+                        (!heroId || matchId || String(r.heroId) === heroId),
+                    )
+                    .map((row) => (
+                      <MatchCard
+                        key={row.matchId}
+                        row={row}
+                        active={row.matchId === matchId}
+                        choose={() => chooseMatch(row)}
+                        reload={reload}
+                      />
+                    ))}
+                </div>
+                {history?.error ? (
+                  <Retry error={history.error} reload={reload} />
+                ) : (
+                  !records.length && (
+                    <p className="hint">{history ? '暂无导入的赛事记录。' : '正在读取参赛记录…'}</p>
+                  )
+                )}
+              </section>
+              <HeatmapPanel
+                key={savedId ?? 'slot-' + member?.playerSlot}
+                identity={identity}
+                matchId={matchId}
+                name={name}
+                records={records}
+                heroId={heroId}
+                setHeroId={setHeroId}
+                selectedMatch={selectedMatch}
+                mode={mode}
+                setMode={setMode}
+                side={side}
+                setSide={setSide}
+                initialRole={initialParams.get('roleScope') === 'cores' ? 'cores' : 'all'}
+                revision={revision}
+                reload={reload}
+              />
+              {matchId && (
+                <section className="studio-card">
+                  <button aria-expanded={scoreboard} onClick={() => setScoreboard(!scoreboard)}>
+                    {scoreboard ? '收起' : '展开'}十人出装计分板
+                  </button>
+                  {scoreboard && (
+                    <MatchDetail
+                      replay
+                      key={matchId}
+                      id={matchId}
+                      revision={revision}
+                      name={(id) => heroes.find((h) => h.id === id)?.cnName ?? String(id)}
+                      notify={notify}
+                      refresh={refresh}
+                      changed={reload}
+                    />
+                  )}
+                </section>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

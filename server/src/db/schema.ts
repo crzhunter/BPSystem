@@ -125,4 +125,22 @@ ALTER TABLE player_pub_heroes ADD COLUMN patch_wins INTEGER NOT NULL DEFAULT 0 C
 `,
   '-- v6 的分段偏好已停用，旧库保留原设置。',
   '-- v7 从原始计数生成综合榜，数据迁移与版本号在同一事务提交。',
+  `
+ALTER TABLE players ADD COLUMN alias TEXT NOT NULL DEFAULT '';
+ALTER TABLE players ADD COLUMN rank_tier INTEGER;
+ALTER TABLE players ADD COLUMN leaderboard_rank INTEGER;
+ALTER TABLE players ADD COLUMN primary_role INTEGER CHECK(primary_role IS NULL OR primary_role BETWEEN 1 AND 5);
+ALTER TABLE players ADD COLUMN style_tags_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE match_players ADD COLUMN denies INTEGER;
+ALTER TABLE match_players ADD COLUMN hero_healing INTEGER;
+ALTER TABLE match_players ADD COLUMN item_neutral INTEGER;
+ALTER TABLE match_players ADD COLUMN obs_left_log_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE match_players ADD COLUMN sen_left_log_json TEXT NOT NULL DEFAULT '[]';
+CREATE TABLE IF NOT EXISTS player_hero_overrides (
+ player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+ hero_id INTEGER NOT NULL REFERENCES heroes(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL CHECK(kind IN ('signature','comfort','avoid')),
+ note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, PRIMARY KEY(player_id,hero_id)
+);
+`,
 ];

@@ -27,11 +27,7 @@ export function SegmentedControl<T extends Value>({
           const active = o.value === value;
           const content = (
             <>
-              {active && (
-                <motion.div layoutId="droplet" className="droplet" transition={spring}>
-                  <LiquidGlass className="droplet-glass" />
-                </motion.div>
-              )}
+              {active && <motion.div layoutId="droplet" className="droplet" transition={spring} />}
               <span className="segment-label">{o.label}</span>
             </>
           );

@@ -250,7 +250,7 @@
 .confirm-pick{border-radius:3px;background:var(--gold);color:#241e12;padding:6px 8px;font-weight:650}.confirm-pick:hover:enabled{background:#f9daa1;color:#251d14}.bp-room kbd{font:11px monospace;border:1px solid currentColor;padding:0 3px;border-radius:2px;opacity:.65}
 .bp-section-title{justify-content:space-between;margin-bottom:10px}.bp-section-title h2{font-size:17px;gap:7px}.bp-section-title h2 svg{color:#b1b7c1;width:17px;height:17px}
 .bp-pool,.meter,.rec-panel{padding:13px}.pool-filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
-.pool-search{min-width:150px;flex:1;display:flex;align-items:center;gap:6px;color:#aab0ba;padding:4px 8px;background:#0f151f;border:1px solid #3a404a;border-radius:4px}.pool-search input{min-width:0;flex:1;font-size:12px;background:none;border:0;color:white;outline:0}.pool-search:focus-within{border-color:var(--gold)}
+.pool-search{min-width:150px;flex:1;display:flex;align-items:center;gap:6px;color:#aab0ba;padding:4px 8px;background:#263546;border:1px solid #3a404a;border-radius:4px}.pool-search input{min-width:0;flex:1;font-size:12px;background:none;border:0;color:white;outline:0}.pool-search:focus-within{border-color:var(--gold)}
 .role-chips,.attr-jumps,.rec-tabs{display:flex;align-items:center;gap:3px}.role-chips button,.attr-jumps button,.rec-tabs button{background:#252b35;color:#abb1bb;padding:4px 6px;border-radius:3px;white-space:nowrap}.role-chips button[aria-pressed=true],.rec-tabs button[aria-pressed=true]{background:#373d47;color:#dfb356}
 .pool-quads{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 11px}
 .attr-group{min-width:0;background:#121822;border-radius:3px;padding:7px}.attr-str{--attr:#e99582}.attr-agi{--attr:#a6cf80}.attr-int{--attr:#86b6e6}.attr-all{--attr:#c7a4da}
@@ -277,7 +277,7 @@
 .bar-base,.damage-line>div{display:flex;background:#2f353f;height:4px;border-radius:3px;overflow:hidden}.bar-base i{background:#88bda2}.bar-base .gain{background:var(--gold)}.damage-line>div{flex:1}.damage-line i:nth-child(1){background:#c49974}.damage-line i:nth-child(2){background:#849fcb}.damage-line i:nth-child(3){background:#c0c6d0}
 .range-line,.preview-text{margin:6px 0}.preview-text{font-size:12px;color:var(--gold)}.diag-pills{display:flex;gap:4px;flex-wrap:wrap}.diag-pills span{font-size:10px;color:#d4bd98;background:#302e25;padding:2px 5px;border-radius:3px}.diag-pills .strength{background:#2c323c;color:#b9bfc9}
 .roster-drawer{padding:10px}.roster-drawer>.controls-row{margin-top:7px}
-.score-items{display:flex;gap:3px}.score-items>span{width:36px;height:26px;position:relative;background:#252b35;border:1px solid #434953}.score-items img{width:100%;height:100%;object-fit:cover}.score-items small{display:none;position:absolute;bottom:100%;left:0;width:max-content;background:#0f151f;color:#f2e5b8;border:1px solid #65604d;padding:3px;z-index:2}.score-items>span:is(:hover,:focus) small{display:block}
+.score-items{display:flex;gap:3px}.score-items>span{width:36px;height:26px;position:relative;background:#252b35;border:1px solid #434953}.score-items img{width:100%;height:100%;object-fit:cover}.score-items small{display:none;position:absolute;bottom:100%;left:0;width:max-content;background:#263546;color:#f2e5b8;border:1px solid #65604d;padding:3px;z-index:2}.score-items>span:is(:hover,:focus) small{display:block}
 @media(min-width:1200px){.workspace main:has(.bp-room){max-width:1900px;padding:20px clamp(16px,1.6vw,28px) 30px}.app:has(.bp-room) .sidebar{width:180px}.app:has(.bp-room) .workspace{margin-left:180px}}
 @media(max-width:1100px){.bp-bench{grid-template-columns:minmax(0,1.55fr) minmax(250px,1fr)}.pool-quads{gap:6px}.tile-grid{grid-template-columns:repeat(auto-fill,minmax(41px,1fr))}.decision dl{display:block}.decision dt:not(:first-child){margin-top:4px}}
 @media(max-width:767px){
@@ -372,7 +372,7 @@
 .decision-lead { flex: 1; min-width: 0; padding: 0; }
 .decision-face { width: 64px; height: 45px; }
 .decision-score { font-size: 20px; }
-.card-lock { padding: 5px 8px; background: #e7c580; color: #241e12; font-weight: 700; border-radius: 3px; }
+.card-lock { padding: 5px 8px; background: #344656; color: #eff5f9; font-weight: 700; border-radius: 3px; }
 .card-stats { color: #e5d5b1; font-variant-numeric: tabular-nums; margin: 6px 9px 1px; }
 .card-stats b { margin-left: 6px; color: var(--dire); }
 .rec-compact .compact-signature { width: auto; color: var(--dire); }

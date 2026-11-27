@@ -19,8 +19,10 @@ const tables = [
   'draft_sessions',
   'draft_actions',
   'hero_matchups',
+  'player_hero_overrides',
 ] as const;
-const settingsWhere = " WHERE key IN ('pub_recent_days','tournament_match_weight','player_pool_weight')";
+const settingsWhere =
+  " WHERE key IN ('pub_recent_days','tournament_match_weight','player_pool_weight')";
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -36,6 +38,12 @@ function validateJson(column: string, value: string, table: string) {
         parsed.length === 5 &&
           parsed.every((id) => id === null || (Number.isSafeInteger(id) && id > 0)),
         '备份中的对局位置无效',
+      );
+    if (column === 'style_tags_json')
+      check(
+        parsed.length <= 20 &&
+          parsed.every((tag) => typeof tag === 'string' && tag.trim() && tag.length <= 30),
+        '选手风格标签无效',
       );
     if (column === 'roles_json' && table === 'players')
       check(
@@ -57,7 +65,7 @@ function validateSetting(row: Record<string, unknown>) {
       Number.isFinite(n) &&
       ((row.key === 'pub_recent_days' && Number.isInteger(n) && n >= 1 && n <= 365) ||
         (row.key === 'tournament_match_weight' && n >= 0 && n <= 100) ||
-        (row.key === 'player_pool_weight' && n >= 0.15 && n <= 0.20)),
+        (row.key === 'player_pool_weight' && n >= 0.15 && n <= 0.2)),
     '备份中的分析设置无效',
   );
 }
@@ -73,16 +81,18 @@ export function backupRoutes(db: DatabaseSync) {
       ),
     );
     res.attachment('BPSystem-' + new Date().toISOString().slice(0, 10) + '.json');
-    res.json({ version: 4, exportedAt: new Date().toISOString(), ...data });
+    res.json({ version: 5, exportedAt: new Date().toISOString(), ...data });
   });
   r.post('/backup/import', (req, res) => {
     const snapshot: Record<string, unknown> = req.body;
+    const legacy = [2, 3, 4].includes(Number(snapshot.version));
+    if (legacy) snapshot.player_hero_overrides ??= [];
     check(
-      (snapshot.version === 2 || snapshot.version === 3 || snapshot.version === 4) &&
+      ([2, 3, 4, 5] as unknown[]).includes(snapshot.version) &&
         typeof snapshot.exportedAt === 'string' &&
         Number.isFinite(Date.parse(snapshot.exportedAt)) &&
         tables.every((t) => Array.isArray(snapshot[t])),
-      '请选择完整的 v2、v3 或 v4 JSON 备份',
+      '请选择完整的 v2 至 v5 JSON 备份',
     );
     try {
       const counts = transaction(db, () => {
@@ -103,12 +113,35 @@ export function backupRoutes(db: DatabaseSync) {
           );
           const input = snapshot[t] as unknown[];
           // 旧备份可能保存两种分段字段；跳过这些行，其余设置仍须完整校验。
-          const rows = t === 'settings'
-            ? input.filter((row) => !object(row) || (row.key !== 'metaBracket' && row.key !== 'metaProfile'))
-            : input;
+          const rows =
+            t === 'settings'
+              ? input.filter(
+                  (row) => !object(row) || (row.key !== 'metaBracket' && row.key !== 'metaProfile'),
+                )
+              : input;
           for (let row of rows) {
             // 旧快照只有生涯统计。保留原值，新版本的有效样本从逐场记录推断。
-            if (snapshot.version !== 4 && object(row)) {
+            if (legacy && object(row)) {
+              if (t === 'players')
+                row = {
+                  alias: '',
+                  rank_tier: null,
+                  leaderboard_rank: null,
+                  primary_role: null,
+                  style_tags_json: '[]',
+                  ...row,
+                };
+              else if (t === 'match_players')
+                row = {
+                  denies: null,
+                  hero_healing: null,
+                  item_neutral: null,
+                  obs_left_log_json: '[]',
+                  sen_left_log_json: '[]',
+                  ...row,
+                };
+            }
+            if (Number(snapshot.version) < 4 && object(row)) {
               if (t === 'player_pub_heroes') row = { ...row, patch_games: 0, patch_wins: 0 };
               else if (t === 'player_pub_matches') row = { ...row, patch: null };
             }
@@ -133,6 +166,21 @@ export function backupRoutes(db: DatabaseSync) {
                   Number(row.account_id) <= 4294967295,
                 '选手账号无效',
               );
+            if (t === 'players') {
+              check(
+                row.rank_tier == null ||
+                  row.rank_tier === 80 ||
+                  /^[1-7][1-5]$/.test(String(row.rank_tier)),
+                '选手段位无效',
+              );
+              check(
+                row.leaderboard_rank == null ||
+                  (row.rank_tier === 80 &&
+                    Number.isSafeInteger(row.leaderboard_rank) &&
+                    Number(row.leaderboard_rank) > 0),
+                '冠绝排名无效',
+              );
+            }
             if (t === 'team_members')
               check(Number.isInteger(row.slot) && Number(row.slot) > 0, '阵容位置无效');
             const values = columns.map((c) => {
@@ -161,7 +209,7 @@ export function backupRoutes(db: DatabaseSync) {
             normalizeDraft(db, { ...session, actions: actions.all(row.id) });
           }
         }
-        if (snapshot.version !== 4) fillMissingPatches(db, patchScope(db));
+        if (Number(snapshot.version) < 4) fillMissingPatches(db, patchScope(db));
         db.exec('DELETE FROM api_cache');
         return counts;
       });

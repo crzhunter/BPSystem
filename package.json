@@ -14,6 +14,7 @@
     "dev": "concurrently --kill-others -n api,web \"npm run dev -w server\" \"npm run dev -w web\"",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm test -w server",
+    "test:browser": "node server/test/browser/coach-room.mjs",
     "build": "npm run build --workspaces",
     "start": "npm start -w server"
   },
@@ -21,8 +22,9 @@
     "rollup": "npm:@rollup/wasm-node@4.52.5"
   },
   "devDependencies": {
+    "@types/node": "^24.10.0",
     "concurrently": "^9.2.1",
-    "typescript": "~5.9.3",
-    "@types/node": "^24.10.0"
+    "playwright-core": "1.56.1",
+    "typescript": "~5.9.3"
   }
 }

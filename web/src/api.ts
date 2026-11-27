@@ -2,6 +2,11 @@ export type Player = {
   id: number;
   accountId: number;
   nickname: string;
+  alias: string;
+  rankTier: number | null;
+  leaderboardRank: number | null;
+  primaryRole: number | null;
+  styleTags: string[];
   roles: number[];
   notes: string;
   lastSyncedAt: string | null;

@@ -72,7 +72,14 @@ export function migrate(db: DatabaseSync) {
     transaction(db, () => {
       const version = index + 1;
       if (db.prepare('SELECT 1 FROM schema_migrations WHERE version=?').get(version)) return;
-      db.exec(sql);
+      if (version === 8) {
+        // 旧版工具可能只回退迁移标记。逐列检查以保留已经写入的档案与眼位。
+        for (const statement of sql.split(';').map((s) => s.trim()).filter(Boolean)) {
+          const column = /^ALTER TABLE (\w+) ADD COLUMN (\w+)/.exec(statement);
+          if (column && db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name=?').get(column[1], column[2])) continue;
+          db.exec(statement);
+        }
+      } else db.exec(sql);
       // 初始快照仅随首次迁移写入，重启时保留后续同步的数据。
       if (version === 4)
         storeConstants(

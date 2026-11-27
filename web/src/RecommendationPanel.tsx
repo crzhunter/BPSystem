@@ -1,13 +1,6 @@
 import { motion } from 'framer-motion';
 import { SegmentedControl, Reveal, spring } from './MotionControls';
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type PointerEvent,
-  type ReactNode,
-} from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Crosshair, Trophy } from 'lucide-react';
 import { type Advice } from './draftModel';
 import { Portrait } from './HeroPoolGrid';
@@ -23,6 +16,9 @@ export function RecommendationPanel({
   preference,
   setPreference,
   planAction,
+  actionText,
+  actionType,
+  canLock,
 }: {
   data: Advice;
   turn: string;
@@ -32,28 +28,12 @@ export function RecommendationPanel({
   scouting?: ReactNode;
   preference: RolePreference;
   setPreference: (value: RolePreference) => void;
+  actionText: string;
+  actionType: 'pick' | 'ban';
+  canLock: boolean;
   planAction?: 'pick' | 'ban';
 }) {
   const [expanded, setExpanded] = useState<number[]>([]);
-  const reflectionFrame = useRef(0);
-  const pointer = useRef<{ card: HTMLElement; x: number; y: number } | null>(null);
-  useEffect(() => () => cancelAnimationFrame(reflectionFrame.current), []);
-  function reflect(event: PointerEvent<HTMLElement>) {
-    pointer.current = { card: event.currentTarget, x: event.clientX, y: event.clientY };
-    if (reflectionFrame.current) return;
-    // 仅普通推荐卡追踪指针，每帧使用最后一个坐标，避免使玻璃采样面失效。
-    reflectionFrame.current = requestAnimationFrame(() => {
-      reflectionFrame.current = 0;
-      const { card, x, y } = pointer.current!;
-      const rect = card.getBoundingClientRect();
-      const px = x - rect.left,
-        py = y - rect.top;
-      const angle = Math.atan2(py - rect.height / 2, px - rect.width / 2);
-      card.style.setProperty('--px', px + 'px');
-      card.style.setProperty('--py', py + 'px');
-      card.style.setProperty('--spec-angle', Math.round((angle * 180) / Math.PI + 90) + 'deg');
-    });
-  }
   const active = data.currentStep.actionType;
   const [choice, setChoice] = useState<{ turn: string; tab: Tab }>();
   const tab =
@@ -62,6 +42,68 @@ export function RecommendationPanel({
       : (planAction ?? active);
   const rows = tab === 'ban' ? data.banRecommendations : data.pickRecommendations;
   const titles = { pick: '我方选人', ban: '我方禁用', scout: '对手情报' };
+  function toggle(id: number) {
+    select(id);
+    setExpanded((ids) => (ids.includes(id) ? ids.filter((n) => n !== id) : [...ids, id]));
+  }
+  function confirm(id: number) {
+    return (
+      <button
+        type="button"
+        className={'card-lock satin-btn ' + actionType}
+        disabled={!canLock}
+        onClick={() => lock(id)}
+      >
+        {actionText}
+      </button>
+    );
+  }
+  function detail(r: (typeof rows)[number]) {
+    return (
+      <Reveal open={expanded.includes(r.heroId)}>
+        <dl>
+          <dt>天梯战绩</dt>
+          <dd>
+            {r.metaSummary.text} · 采样 {r.metaSummary.games.toLocaleString()} 场{' '}
+            {r.metaSummary.sideText}
+          </dd>
+          <dt>推荐理由</dt>
+          <dd>
+            {r.tips.map((t) => (
+              <p key={t}>{t}</p>
+            ))}
+          </dd>
+          <dt>分项贡献</dt>
+          <dd className="score-parts">
+            {(
+              [
+                ['meta', '版本'],
+                ['composition', '阵容'],
+                ['matchup', '对位'],
+                ['strategy', '轮次'],
+                ['player', '选手'],
+              ] as const
+            ).map(([k, label]) => (
+              <span key={k}>
+                {label} {r.scoreBreakdown[k].toFixed(1)}
+              </span>
+            ))}
+          </dd>
+          <dt>{tab === 'ban' ? '禁用动机' : '阵容补足'}</dt>
+          <dd>{tab === 'ban' ? r.whyBan : r.compositionFit.text}</dd>
+          <dt>克制与协同</dt>
+          <dd>
+            {r.matchupDetails.length
+              ? r.matchupDetails.map((n) => <p key={n.kind + n.vsHeroId}>{n.text}</p>)
+              : '当前盘面暂无已知克制或配合记录。'}
+          </dd>
+          <dt>选手英雄池</dt>
+          <dd>{r.playerFit?.text ?? '暂无对应位置的选手样本。'}</dd>
+        </dl>
+        {confirm(r.heroId)}
+      </Reveal>
+    );
+  }
   return (
     <section className="rec-panel bp-box" id="recommendations">
       <div className="bp-section-title">
@@ -75,7 +117,10 @@ export function RecommendationPanel({
                 ? '我方下一手预案'
                 : '我方禁选已结束'}
         </h2>
-        <small>{data.patch} 天梯加权综合（高分主导）</small>
+        <small>
+          {data.patch} ·{' '}
+          {tab === 'scout' ? '对手侦察' : data.mode[tab] === 'team' ? '战队模式' : '自由模式'}
+        </small>
       </div>
       <fieldset className="position-choice">
         <legend>优先位置</legend>
@@ -132,7 +177,7 @@ export function RecommendationPanel({
                 layoutId={'recommend-' + r.heroId}
                 style={{ '--hero-art': `url("/portraits/${r.heroId}.webp")` } as CSSProperties}
                 transition={spring}
-                onPointerMove={reflect}
+
                 onClick={(e) => {
                   if (!(e.target as HTMLElement).closest('button,.card-detail')) select(r.heroId);
                 }}
@@ -144,7 +189,6 @@ export function RecommendationPanel({
                     className="decision-lead"
                     aria-label={'预选' + r.cnName}
                     onClick={() => select(r.heroId)}
-                    onDoubleClick={() => lock(r.heroId)}
                   >
                     <div className="decision-face">
                       <Portrait hero={{ ...r, id: r.heroId }} />
@@ -164,13 +208,7 @@ export function RecommendationPanel({
                       <small>推荐分</small>
                     </b>
                   </button>
-                  <button
-                    className="card-lock"
-                    disabled={data.currentStep.isCompleted}
-                    onClick={() => lock(r.heroId)}
-                  >
-                    {data.currentStep.isOurTurn ? (active === 'ban' ? '禁用' : '选用') : '录入对方'}
-                  </button>
+                  {confirm(r.heroId)}
                 </div>
                 <div className="card-stats">
                   {r.metaSummary.text}
@@ -184,82 +222,42 @@ export function RecommendationPanel({
                 <div className="card-detail">
                   <button
                     aria-expanded={expanded.includes(r.heroId)}
-                    onClick={() =>
-                      setExpanded((ids) =>
-                        ids.includes(r.heroId)
-                          ? ids.filter((id) => id !== r.heroId)
-                          : [...ids, r.heroId],
-                      )
-                    }
+                    onClick={() => toggle(r.heroId)}
                   >
                     {expanded.includes(r.heroId) ? '收起拆解' : '展开详细拆解'}
                   </button>
-                  <Reveal open={expanded.includes(r.heroId)}>
-                    <dl>
-                      <dt>天梯战绩</dt>
-                      <dd
-                        title={
-                          r.metaSummary.sampledAt.slice(0, 10) +
-                          ' · 天梯合计 ' +
-                          r.metaSummary.games +
-                          ' 次选取'
-                        }
-                      >
-                        {r.metaSummary.text} · 选了 {r.metaSummary.games.toLocaleString()} 场
-                        {r.metaSummary.sideText && <p>{r.metaSummary.sideText}</p>}
-                      </dd>
-                      <dt>{tab === 'ban' ? '禁用动机' : '阵容补足'}</dt>
-                      <dd>
-                        {tab === 'ban' ? (
-                          <>
-                            <b className="ban-kind">{r.shortTags[0]}</b>
-                            {r.whyBan}
-                          </>
-                        ) : (
-                          r.compositionFit.text
-                        )}
-                      </dd>
-                      <dt>克制与协同</dt>
-                      <dd>
-                        {r.matchupDetails.length
-                          ? r.matchupDetails.map((n) => <p key={n.kind + n.vsHeroId}>{n.text}</p>)
-                          : data.composition.our.assignments.length +
-                              data.composition.enemy.assignments.length
-                            ? '当前对阵暂无已知配合或克制记录。'
-                            : '双方尚未亮出英雄，优先参考版本强度与摇摆空间。'}
-                      </dd>
-                      {r.playerFit && (
-                        <>
-                          <dt>选手英雄池</dt>
-                          <dd>{r.playerFit.text}</dd>
-                        </>
-                      )}
-                    </dl>
-                  </Reveal>
+                  {detail(r)}
                 </div>
               </motion.article>
             ))}
           </div>
           <div className="rec-compact">
             {rows.slice(3).map((r, i) => (
-              <motion.button
-                layout="position"
-                layoutId={'recommend-' + r.heroId}
-                transition={spring}
+              <article
                 key={r.heroId}
-                aria-pressed={pending === r.heroId}
-                onClick={() => select(r.heroId)}
-                onDoubleClick={() => lock(r.heroId)}
+                className={'decision compact-row' + (pending === r.heroId ? ' selected' : '')}
               >
-                <small>#{i + 4}</small>
-                <Portrait hero={{ ...r, id: r.heroId }} />
-                <b>{r.cnName}</b>
-                {r.shortTags[0].includes('绝活') && (
-                  <small className="compact-signature">{r.shortTags[0]}</small>
-                )}
-                <span>{r.roleLabel}</span>
-                <strong>{r.score.toFixed(1)}</strong>
-              </motion.button>
+                <div
+                  className="compact-head"
+                  onClick={(e) => {
+                    if (!(e.target as Element).closest('button')) toggle(r.heroId);
+                  }}
+                >
+                  <button
+                    className="compact-summary"
+                    aria-expanded={expanded.includes(r.heroId)}
+                    onClick={() => toggle(r.heroId)}
+                  >
+                    <small>#{i + 4}</small>
+                    <Portrait hero={{ ...r, id: r.heroId }} />
+                    <b>{r.cnName}</b>
+                    <span>{r.roleLabel}</span>
+                    <strong>{r.score.toFixed(1)}</strong>
+                  </button>
+                  {confirm(r.heroId)}
+                </div>
+                <div className="card-detail">{detail(r)}</div>
+              </article>
             ))}
           </div>
           {!rows.length && (

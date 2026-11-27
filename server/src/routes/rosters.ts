@@ -3,6 +3,8 @@ import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import { transaction } from '../db/index.ts';
 import { check, HttpError, integer, stringValue } from '../utils/input.ts';
 import { parseAccountId } from '../utils/accountId.ts';
+import { teamScouting } from '../services/scouting.ts';
+import { recentPlayerMatches } from '../services/replay.ts';
 import { analytics } from '../services/analytics.ts';
 import type { OpenDotaClient } from '../services/opendota.ts';
 
@@ -12,6 +14,11 @@ function player(row: Row) {
     id: Number(row.id),
     accountId: Number(row.account_id),
     nickname: String(row.nickname),
+    alias: String(row.alias),
+    rankTier: row.rank_tier,
+    leaderboardRank: row.leaderboard_rank,
+    primaryRole: row.primary_role,
+    styleTags: JSON.parse(String(row.style_tags_json)) as string[],
     roles: JSON.parse(String(row.roles_json)) as number[],
     notes: String(row.notes),
     steamName: row.steam_name,
@@ -55,11 +62,23 @@ function playerFields(body: Record<string, unknown>, old?: Row) {
   const roles = body.roles ?? JSON.parse(String(old?.roles_json ?? '[]'));
   check(Array.isArray(roles), '位置须为数组');
   const positions = [...new Set(roles.map((r) => integer(r, 1, 5, '位置')))].sort();
+  const field = (key: string, column: string) => (key in body ? body[key] : old?.[column]);
+  const rank = field('rankTier', 'rank_tier'),
+    leader = field('leaderboardRank', 'leaderboard_rank');
+  const primary = field('primaryRole', 'primary_role');
+  const tags = body.styleTags ?? JSON.parse(String(old?.style_tags_json ?? '[]'));
+  check(Array.isArray(tags) && tags.length <= 20, '最多 20 个风格标签');
+  check(rank == null || rank === 80 || /^[1-7][1-5]$/.test(String(rank)), '段位编码无效');
   return [
     id,
     nickname,
     JSON.stringify(positions),
     stringValue(body.notes ?? old?.notes ?? '', '选手备注', 2000),
+    stringValue(body.alias ?? old?.alias ?? '', '队内代号', 60),
+    rank == null ? null : integer(rank, 11, 80, '段位'),
+    rank !== 80 || leader == null ? null : integer(leader, 1, 999999, '冠绝排名'),
+    primary == null ? null : integer(primary, 1, 5, '主位置'),
+    JSON.stringify([...new Set(tags.map((t) => stringValue(t, '风格标签', 30, true)))]),
   ] as const;
 }
 function teamFields(body: Record<string, unknown>, old?: Row) {
@@ -97,11 +116,81 @@ function replaceRoster(db: DatabaseSync, teamId: number, members: unknown) {
 }
 export function rosterRoutes(db: DatabaseSync, client: OpenDotaClient) {
   const r = Router();
+  r.post('/players/batch', (req, res) => {
+    const input = stringValue(req.body.text, '选手账号列表', 20000, true);
+    const ids = [
+      ...new Set(
+        input
+          .split(/[\s,，;；]+/)
+          .filter(Boolean)
+          .map(parseAccountId),
+      ),
+    ];
+    check(ids.length <= 200, '一次最多导入 200 名选手');
+    const now = new Date().toISOString();
+    const created = transaction(db, () => {
+      const add = db.prepare(
+        'INSERT INTO players(account_id,nickname,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(account_id) DO NOTHING',
+      );
+      return ids.reduce((n, id) => n + Number(add.run(id, String(id), now, now).changes), 0);
+    });
+    res.status(201).json({ accountIds: ids, created, existing: ids.length - created });
+  });
+  r.get('/players/:id/overrides', (req, res) => {
+    existing(db, 'players', req.params.id);
+    res.json(
+      db
+        .prepare(
+          'SELECT hero_id heroId,kind,note FROM player_hero_overrides WHERE player_id=? ORDER BY hero_id',
+        )
+        .all(req.params.id),
+    );
+  });
+  r.put('/players/:id/overrides/:heroId', (req, res) => {
+    existing(db, 'players', req.params.id);
+    check(db.prepare('SELECT 1 FROM heroes WHERE id=?').get(req.params.heroId), '英雄不存在');
+    const { kind } = req.body,
+      note = stringValue(req.body.note ?? '', '标注', 500);
+    check(['signature', 'comfort', 'avoid'].includes(kind), '英雄池标签无效');
+    db.prepare(
+      `INSERT INTO player_hero_overrides VALUES(?,?,?,?,?) ON CONFLICT(player_id,hero_id)
+      DO UPDATE SET kind=excluded.kind,note=excluded.note,updated_at=excluded.updated_at`,
+    ).run(req.params.id, req.params.heroId, kind, note, new Date().toISOString());
+    res.json({ heroId: Number(req.params.heroId), kind, note });
+  });
+  r.delete('/players/:id/overrides/:heroId', (req, res) => {
+    db.prepare('DELETE FROM player_hero_overrides WHERE player_id=? AND hero_id=?').run(
+      req.params.id,
+      req.params.heroId,
+    );
+    res.sendStatus(204);
+  });
+  r.get('/players/:id/recent-matches', (req, res) =>
+    res.json(recentPlayerMatches(db, Number(req.params.id))),
+  );
+  r.get('/teams/:id/scouting', (req, res) => {
+    existing(db, 'teams', req.params.id);
+    const members = db
+      .prepare('SELECT slot,player_id FROM team_members WHERE team_id=? AND slot<=5')
+      .all(req.params.id);
+    res.json(
+      teamScouting(
+        db,
+        Array.from(
+          { length: 5 },
+          (_, i) => Number(members.find((m) => m.slot === i + 1)?.player_id) || null,
+        ),
+      ),
+    );
+  });
   r.get('/players/:id/analytics', (req, res) => res.json(analytics(db, Number(req.params.id))));
   r.post('/players/:id/sync', async (req, res) => {
     const id = Number(req.params.id);
     await client.syncPlayer(id);
-    res.json({ player: player(existing(db, 'players', req.params.id)), analytics: analytics(db, id) });
+    res.json({
+      player: player(existing(db, 'players', req.params.id)),
+      analytics: analytics(db, id),
+    });
   });
   async function syncRoster(playerIds: number[]) {
     const results = [];
@@ -125,11 +214,20 @@ export function rosterRoutes(db: DatabaseSync, client: OpenDotaClient) {
   }
   r.post('/teams/:id/sync', async (req, res) => {
     existing(db, 'teams', req.params.id);
-    const members = db.prepare('SELECT player_id FROM team_members WHERE team_id=? ORDER BY slot').all(req.params.id);
-    res.json(await syncRoster(members.map(m => Number(m.player_id))));
+    const members = db
+      .prepare('SELECT player_id FROM team_members WHERE team_id=? ORDER BY slot')
+      .all(req.params.id);
+    res.json(await syncRoster(members.map((m) => Number(m.player_id))));
   });
   r.post('/players/resync-patch', async (_req, res) => {
-    res.json(await syncRoster(db.prepare('SELECT id FROM players ORDER BY id').all().map(p => Number(p.id))));
+    res.json(
+      await syncRoster(
+        db
+          .prepare('SELECT id FROM players ORDER BY id')
+          .all()
+          .map((p) => Number(p.id)),
+      ),
+    );
   });
   r.get('/players', (_req, res) =>
     res.json(db.prepare('SELECT * FROM players ORDER BY id').all().map(player)),
@@ -138,7 +236,7 @@ export function rosterRoutes(db: DatabaseSync, client: OpenDotaClient) {
     const now = new Date().toISOString();
     const result = db
       .prepare(
-        'INSERT INTO players(account_id,nickname,roles_json,notes,created_at,updated_at) VALUES(?,?,?,?,?,?)',
+        'INSERT INTO players(account_id,nickname,roles_json,notes,alias,rank_tier,leaderboard_rank,primary_role,style_tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
       )
       .run(...playerFields(req.body), now, now);
     res.status(201).json(player(existing(db, 'players', String(result.lastInsertRowid))));
@@ -155,7 +253,7 @@ export function rosterRoutes(db: DatabaseSync, client: OpenDotaClient) {
         ).run(old.id);
       }
       db.prepare(
-        'UPDATE players SET account_id=?,nickname=?,roles_json=?,notes=?,updated_at=? WHERE id=?',
+        'UPDATE players SET account_id=?,nickname=?,roles_json=?,notes=?,alias=?,rank_tier=?,leaderboard_rank=?,primary_role=?,style_tags_json=?,updated_at=? WHERE id=?',
       ).run(...fields, new Date().toISOString(), old.id);
     });
     res.json(player(existing(db, 'players', req.params.id)));
@@ -165,7 +263,9 @@ export function rosterRoutes(db: DatabaseSync, client: OpenDotaClient) {
     const id = transaction(db, () => {
       const now = new Date().toISOString();
       const result = db
-        .prepare('INSERT INTO teams(name,tag,color,notes,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+        .prepare(
+          'INSERT INTO teams(name,tag,color,notes,created_at,updated_at) VALUES (?,?,?,?,?,?)',
+        )
         .run(...teamFields(req.body), now, now);
       const id = Number(result.lastInsertRowid);
       if (req.body.members !== undefined) replaceRoster(db, id, req.body.members);

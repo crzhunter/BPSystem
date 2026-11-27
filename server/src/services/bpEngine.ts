@@ -15,7 +15,7 @@ import {
 } from './composition.ts';
 import { slotsFor, type Action, type Draft } from './draftState.ts';
 import { comfortCombos, scoutRoster, type Member } from './scouting.ts';
-import { readSettings } from './settings.ts';
+import { poolValue, recommendationWeights } from './recommendation.ts';
 import { candidateRoles, roleBadge, rolePriority, type RolePreference } from './rolePriority.ts';
 import { forecast } from './draftForecast.ts';
 
@@ -23,7 +23,6 @@ function context(db: DatabaseSync, draft: Draft) {
   const heroes = listHeroes(db);
   return {
     heroes,
-    playerShare: readSettings(db).playerPoolWeight,
     byId: new Map(heroes.map((h) => [h.id, h])),
     radiant: scoutRoster(db, draft.radiantPlayerIds),
     dire: scoutRoster(db, draft.direPlayerIds),
@@ -50,12 +49,32 @@ function localContext(db: DatabaseSync, draft: Draft) {
   cached.set(db, { key, value });
   return value;
 }
+// 手动标签允许非典型分路，候选仍须匹配尚未出英雄的首发位置。
+function rosterRoles(h: Hero, members: Member[], missing: number[]) {
+  return [
+    ...new Set([
+      ...h.typicalRoles,
+      ...members.filter((m) => m.overrides.has(h.id)).map((m) => m.role),
+    ]),
+  ].filter((r) => missing.includes(r));
+}
 function owners(heroId: number, members: Member[], side: Side, roles: number[]) {
   return members
     .flatMap((m) => {
       const h = m.pool.get(heroId);
-      if (!h || !roles.includes(m.role)) return [];
-      const { patchTournament: t, patchPub: p } = h;
+      const kind = m.overrides.get(heroId);
+      if ((!h && !kind) || !roles.includes(m.role)) return [];
+      const empty = {
+        games: 0,
+        wins: 0,
+        winrate: null,
+        radiantGames: 0,
+        radiantWins: 0,
+        direGames: 0,
+        direWins: 0,
+      };
+      const t = h?.patchTournament ?? empty,
+        p = h?.patchPub ?? empty;
       const games =
         side === 'radiant' ? t.radiantGames + p.radiantGames : t.direGames + p.direGames;
       const wins = side === 'radiant' ? t.radiantWins + p.radiantWins : t.direWins + p.direWins;
@@ -65,21 +84,25 @@ function owners(heroId: number, members: Member[], side: Side, roles: number[]) 
           playerId: m.playerId,
           name: m.name,
           role: m.role,
-          weightedScore: h.weightedScore,
+          kind,
+          weightedScore: poolValue(kind, h?.weightedScore ?? 0),
           tournament: t,
           pub: p,
           sideBonus,
           sideGames: games,
           sideWins: wins,
-          isPatch742Sample: h.isPatch742Sample,
+          isPatch742Sample: !!h?.isPatch742Sample,
           specialist:
-            (h.patch742Games >= 3 && 2 * h.patch742Wins >= h.patch742Games) ||
-            (t.games >= 2 && 2 * t.wins >= t.games),
+            kind !== 'avoid' &&
+            (kind === 'signature' ||
+              (!!h && h.patch742Games >= 3 && 2 * h.patch742Wins >= h.patch742Games) ||
+              (t.games >= 2 && 2 * t.wins >= t.games)),
         },
       ];
     })
     .sort(
       (a, b) =>
+        Number(b.kind === 'signature') - Number(a.kind === 'signature') ||
         Number(b.specialist) - Number(a.specialist) ||
         b.weightedScore + b.sideBonus - a.weightedScore - a.sideBonus,
     );
@@ -92,7 +115,11 @@ const record = ({ games, wins, winrate }: Owner['pub'] | Owner['tournament']) =>
   winrate,
 });
 function proficient(o: Owner) {
-  return o.weightedScore >= 45 && (o.tournament.games >= 2 || o.pub.games >= 5);
+  return (
+    o.kind === 'signature' ||
+    o.kind === 'comfort' ||
+    (o.weightedScore >= 45 && (o.tournament.games >= 2 || o.pub.games >= 5))
+  );
 }
 const ranked = (a: { score: number; heroId: number }, b: { score: number; heroId: number }) =>
   b.score - a.score || a.heroId - b.heroId;
@@ -236,9 +263,12 @@ function matchup(
           .join('。'),
       });
   }
+  const counterImpact = clamp(42 + impact);
+  let comboBonus = 0;
   for (const { hero: a } of allies) {
     const note = synergy.get(h.id + '/' + a.id);
     if (note) {
+      comboBonus += 17;
       impact += 17;
       notes.push({
         vsHeroId: a.id,
@@ -249,7 +279,7 @@ function matchup(
       });
     }
   }
-  return { notes, impact: clamp(42 + impact) };
+  return { notes, counterImpact, comboBonus, impact: clamp(42 + impact) };
 }
 const cheeseHeroes = new Set([59, 61, 80, 82, 89, 113]);
 const banLabels = {
@@ -259,19 +289,6 @@ const banLabels = {
   cheese_24th: '末手奇招',
   player_signature: '选手绝活',
 };
-function weights(members: Member[], lineSize: number, step: number, share: number) {
-  const player = members.some((m) => m.pool.size) ? share : 0;
-  const meta = lineSize === 0 ? 0.55 : 0.32,
-    matchup = lineSize === 0 ? 0.09 : step >= 16 ? 0.33 : 0.2,
-    composition = lineSize === 0 ? 0.21 : step >= 16 ? 0.26 : 0.35;
-  return {
-    meta: meta * (1 - player),
-    composition: composition * (1 - player),
-    matchup: matchup * (1 - player),
-    strategy: (1 - meta - composition - matchup) * (1 - player),
-    player,
-  };
-}
 function candidate(
   h: Hero,
   allies: Selection[],
@@ -282,7 +299,7 @@ function candidate(
   phase: number,
   isBan: boolean,
   matrix: ReturnType<typeof matchupMatrix>,
-  w: ReturnType<typeof weights>,
+  w: ReturnType<typeof recommendationWeights>,
   roles: number[],
   options: Owner[],
 ) {
@@ -325,29 +342,39 @@ function candidate(
         : side === draft.firstPickSide
           ? 50
           : 62;
-  const signature = m.needsSpecialist && !!owner?.specialist;
+  const signature = owner?.kind === 'signature' || (m.needsSpecialist && !!owner?.specialist);
   const viable = open.length > 0 && (signature || m.tier !== 'T3');
   const playerValue =
-    owner && viable
-      ? clamp(
-          owner.weightedScore +
-            owner.sideBonus +
-            (isBan && options.filter(proficient).length >= 2 ? 6 : 0),
-        )
-      : 0;
+    owner?.kind === 'avoid'
+      ? -40
+      : signature
+        ? 100
+        : owner && (viable || owner.kind === 'comfort')
+          ? clamp(
+              owner.weightedScore +
+                owner.sideBonus +
+                (options.filter(proficient).length >= 2 ? 6 : 0),
+            )
+          : 0;
   const openingPick = !isBan && phase === 1;
-  const compositionValue = openingPick ? fit.value * 0.65 + (role >= 4 ? 35 : 0) : fit.value;
-  const baseline = round(
-    clamp(
-      w.meta * m.strength +
-        w.composition * compositionValue +
-        w.matchup * edge.impact +
-        w.strategy * strategy +
-        w.player * playerValue,
-    ),
+  const compositionValue = clamp(
+    (openingPick ? fit.value * 0.65 + (role >= 4 ? 35 : 0) : fit.value) + edge.comboBonus,
   );
-  // 绝活分只给确有本版战绩、且仍能接下该位置的队员。
-  const score = signature ? round(baseline + (100 - baseline) * 0.72) : baseline;
+  const scoreBreakdown = {
+    meta: round(w.meta * m.strength),
+    composition: round(w.composition * compositionValue),
+    matchup: round(w.matchup * edge.counterImpact),
+    strategy: round(w.strategy * strategy),
+    player: round(w.player * playerValue),
+  };
+  // 避坑分最多抵消当前盘面得分，展示的各项贡献仍能加回最终结果。
+  const board =
+    scoreBreakdown.meta +
+    scoreBreakdown.composition +
+    scoreBreakdown.matchup +
+    scoreBreakdown.strategy;
+  scoreBreakdown.player = Math.max(scoreBreakdown.player, -round(board));
+  const score = round(clamp(board + scoreBreakdown.player));
   const danger = edge.notes.find(
     (n) =>
       n.kind === 'counter' &&
@@ -376,7 +403,11 @@ function candidate(
           ' · ' +
           owner.role +
           ' 号位 · ' +
-          (owner.isPatch742Sample ? '7.42+ ' : '旧版参考') +
+          (owner.kind
+            ? { signature: '手动招牌', comfort: '手动常用', avoid: '手动避坑' }[owner.kind] + ' '
+            : owner.isPatch742Sample
+              ? '7.42+ '
+              : '旧版参考') +
           [
             owner.tournament.games
               ? '赛事 ' + owner.tournament.wins + ' 胜 / ' + owner.tournament.games + ' 场'
@@ -412,7 +443,8 @@ function candidate(
   function matchupTip() {
     if (danger) return '能限制' + danger.vsHeroName;
     if (duo) return '能接' + duo.vsHeroName + '的技能';
-    if ((m.baseWinrate ?? 0) >= 52) return isBan ? '天梯胜率高，别让对手先抢' : '天梯胜率高，可以优先抢';
+    if ((m.baseWinrate ?? 0) >= 52)
+      return isBan ? '天梯胜率高，别让对手先抢' : '天梯胜率高，可以优先抢';
     if (flex) return '能摇摆，先拿也不用亮分路';
     if (h.tags.includes('save')) return '能救被先手的队友';
     if (h.tags.includes('highMobility')) return '能绕过前排找后排';
@@ -444,8 +476,12 @@ function candidate(
     score,
     suggestedRole: role,
     ...roleBadge(h),
-    playerContribution: round(w.player * playerValue),
-    suggestedPlayerId: owner?.isPatch742Sample ? owner.playerId : null,
+    scoreBreakdown,
+    playerContribution: scoreBreakdown.player,
+    suggestedPlayerId:
+      owner && owner.kind !== 'avoid' && (owner.isPatch742Sample || owner.kind)
+        ? owner.playerId
+        : null,
     shortTags: signature
       ? [isBan ? '敌方绝活预警' : '我方绝活', role + ' 号位']
       : isBan
@@ -478,6 +514,7 @@ export function recommend(
   draft: Draft,
   previewHeroId?: number,
   preference: RolePreference = 'auto',
+  replacementStep?: number,
 ) {
   const data = localContext(db, draft),
     our = draft.ourSide,
@@ -495,11 +532,13 @@ export function recommend(
   const ourAudit = diagnose(allies),
     theirAudit = diagnose(enemies);
   const available = (members: Member[], picks: Action[]) =>
-    members.filter((m) => !picks.some((a) => a.assignedPlayerId === m.playerId));
+    members.filter(
+      (m) => !picks.some((a) => a.assignedPlayerId === m.playerId || a.roleHint === m.role),
+    );
   const own = available(data[our].members, ours),
     opp = available(data[enemy].members, theirs);
-  const pickWeights = weights(own, allies.length, plan.step, data.playerShare),
-    banWeights = weights(opp, enemies.length, plan.step, data.playerShare);
+  const pickWeights = recommendationWeights(own, false, plan.step >= 16),
+    banWeights = recommendationWeights(opp, true, plan.step >= 16);
   const roleModes = {
     pick: rolePriority(preference, plan.step, ourAudit, false),
     ban: rolePriority(preference, plan.step, theirAudit, true),
@@ -513,16 +552,21 @@ export function recommend(
   const ourSpecialists = new Set<number>();
   for (const h of data.heroes) {
     if (used.has(h.id) || step.isCompleted) continue;
-    const ownOptions = owners(
-      h.id,
-      own,
-      our,
-      h.typicalRoles.filter((r) => ourAudit.missingRoles.includes(r)),
-    );
+    const ownRoles = rosterRoles(h, own, ourAudit.missingRoles);
+    const ownOptions = owners(h.id, own, our, ownRoles);
     if (ownOptions.some((o) => o.specialist)) ourSpecialists.add(h.id);
     let pickRoles = candidateRoles(h, roleModes.pick, plan.step <= 9, ourAudit.missingRoles);
     if (h.meta.needsSpecialist && preference === 'auto' && !pickRoles.length)
       pickRoles = ownOptions.filter((o) => o.specialist).map((o) => o.role);
+    for (const o of ownOptions) {
+      if (
+        o.kind &&
+        o.kind !== 'avoid' &&
+        (preference === 'auto' || roleModes.pick.targetRoles.includes(o.role)) &&
+        !pickRoles.includes(o.role)
+      )
+        pickRoles.push(o.role);
+    }
     const pickOwners = ownOptions.filter((o) => pickRoles.includes(o.role));
     if (
       ours.length < 5 &&
@@ -547,6 +591,14 @@ export function recommend(
       );
     if (theirs.length === 5) continue;
     const banRoles = candidateRoles(h, roleModes.ban, false, theirAudit.missingRoles);
+    for (const r of rosterRoles(h, opp, theirAudit.missingRoles)) {
+      if (
+        roleModes.ban.targetRoles.includes(r) &&
+        !banRoles.includes(r) &&
+        opp.some((m) => m.role === r && m.overrides.has(h.id))
+      )
+        banRoles.push(r);
+    }
     if (!banRoles.length) continue;
     const targets = owners(
       h.id,
@@ -570,7 +622,7 @@ export function recommend(
       targets,
     );
     bans.push(ban);
-    if (targets.length) {
+    if (targets.length && targets[0].kind !== 'avoid') {
       const o = targets[0];
       topBans.push({
         heroId: h.id,
@@ -583,23 +635,29 @@ export function recommend(
       if (flex.length > 1) flexPicks.push({ heroId: h.id, players: flex.map(identity) });
     }
   }
-  const side = step.actionType === 'pick' ? step.side : opposite(step.side);
+  const replaced = replacementStep ? draft.actions[replacementStep - 1] : undefined;
+  const target = replaced && replacementStep ? order[replacementStep - 1] : step;
+  const side = target.actionType === 'pick' ? target.side : opposite(target.side);
   const h =
-    previewHeroId && !used.has(previewHeroId) && !step.isCompleted
+    previewHeroId && !used.has(previewHeroId) && (!step.isCompleted || replaced)
       ? data.byId.get(previewHeroId)
       : undefined;
-  const line = side === our ? allies : enemies;
+  const fullLine = side === our ? allies : enemies;
+  // 替换时保留后续所有选人，增减量相对于现有完整盘面。
+  const original = replaced && fullLine.find((s) => s.hero.id === replaced.heroId);
+  const line = original ? fullLine.filter((s) => s !== original) : fullLine;
   const preview =
     h && line.length < 5
       ? {
           heroId: h.id,
           side,
-          denied: step.actionType === 'ban',
+          denied: target.actionType === 'ban',
           ...fitCandidate(
             h,
             line,
             side === our ? ourAudit : theirAudit,
             side === our ? '我方' : '敌方',
+            original?.role ?? null,
           ).fit,
         }
       : null;
@@ -622,6 +680,7 @@ export function recommend(
       (hero, friends, foes) => matchup(hero, friends, foes, matrix).impact,
     ),
     preview,
+    mode: { pick: pickWeights.player ? 'team' : 'free', ban: banWeights.player ? 'team' : 'free' },
     weights: { pick: pickWeights, ban: banWeights },
     patch: data.heroes[0]?.meta.patch,
     banRecommendations: bans.sort(ranked).slice(0, 10),

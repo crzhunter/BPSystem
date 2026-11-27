@@ -4,7 +4,7 @@
 
 :root {
   color-scheme: dark;
-  --bg: #090d14;
+  --bg: #17212d;
   --panel: #161c26;
   --line: #2d333d;
   --soft: #a4aab4;
@@ -102,8 +102,8 @@ button:hover:enabled {
   color: #fff;
 }
 button.primary:hover:enabled {
-  background: #c6fd8e;
-  color: #111721;
+  background: #554a39;
+  color: #f5dfb0;
 }
 .app {
   min-height: 100dvh;
@@ -398,8 +398,8 @@ button.primary:hover:enabled {
   background: #2e343e;
 }
 .primary {
-  background: var(--lime);
-  color: #151b25;
+  background: #493f32;
+  color: #f5dfb0;
 }
 .swap {
   margin-left: auto;
@@ -684,7 +684,7 @@ button.primary:hover:enabled {
 .search {
   border: 1px solid var(--line);
   border-radius: 4px;
-  background: #0f151f;
+  background: #263546;
   color: var(--muted);
   gap: 8px;
   padding: 0 10px;
@@ -768,7 +768,7 @@ button.primary:hover:enabled {
 .filters select {
   display: block;
   border: 1px solid #373d47;
-  background: #0f151f;
+  background: #263546;
   color: #dfe5ef;
   border-radius: 4px;
   min-height: 36px;
@@ -1013,8 +1013,9 @@ button.primary:hover:enabled {
 .analysis-card,
 .match-detail {
   padding: 12px;
-  background: #121822;
-  border-left: 2px solid #505660;
+  background: linear-gradient(150deg, #29394a, #263546);
+  border: 1px solid var(--studio-edge);
+  border-radius: 12px;
   overflow-wrap: anywhere;
 }
 .analysis-card h3,

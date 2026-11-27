@@ -16,7 +16,7 @@ export function parseAccountId(input: unknown): number {
     }
     const match = /^\/players\/(\d{1,10})\/?$/.exec(url.pathname);
     if (
-      !/^(www\.)?(opendota|dotabuff)\.com$/.test(url.hostname) ||
+      !/^(www\.)?(opendota|dotabuff|stratz)\.com$/.test(url.hostname) ||
       !match ||
       url.username ||
       url.password ||
